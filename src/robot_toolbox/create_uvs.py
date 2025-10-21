@@ -1,7 +1,7 @@
 import sympy as sp
 import dh_robot as dh
 import uvs
-
+import numpy as np
 
 P = dh.DHSympyParams()
 jntspace, cartspace, taskspace = P.get_params()
@@ -59,9 +59,10 @@ puma_dh_params = [
     [t5,     0.0 , 0.0,     0.0     ]   # Joint 6
 ]
 
+cam0 = dh.Camera(0,0,0,[0,0,4], 4,4, 0, 0) 
 cam1 = dh.Camera(0.1,0.05,0,[0,0,4], 4,4, 0, 0) 
 cam2 = dh.Camera(-sp.pi/2, 0, 0.5, [0,0,4], 4,4,0,0) #looks at scene from the y axis, world z is cam2 y, world x is cam2 x 
-cameras=[cam1, cam2]
+cameras=[cam0, cam1, cam2]
 
 class UVS:
 
@@ -73,18 +74,32 @@ class UVS:
         match name:
             case 'puma':
                 robot = dh.DenavitHartenbergAnalytic(puma_dh_params, P)
+                Q = [.524,-1.047,2.094,0.,-1.571,1.571]
+                
             case 'dof2':
                 robot = dh.DenavitHartenbergAnalytic(dof2_params, P)
+                Q = [0.1,2.0]
             case 'dof3':
                 robot = dh.DenavitHartenbergAnalytic(dylan_dof3_params, P)
+                Q = [0.,1.,-1.8]            
             case 'kinova':
                 robot = dh.DenavitHartenbergAnalytic(kinova_dof7_params, P)
+                Q = np.deg2rad(np.array([-0.1336059570312672, -28.57940673828129, -179.4915313720703, -147.7, 0.06742369383573531, -57.420898437500036, 89.88030242919922, 0.5])).tolist()
             case 'jaco':
                 robot = dh.DenavitHartenbergAnalytic(jaco_dh_params, P)
+                Q = [0.0, 0.6, -1.0, 1.5, 0.0, 0.0]
             case 'dof4':
                 robot = dh.DenavitHartenbergAnalytic(dof4_params, P)
+                initQ=[0. ,1.2, -1.0, -1.2]
             case _:
                 raise ValueError("Unknown robot name")  
+        
+        dof = len(Q)
+    
+        delta = np.pi / 4
+        jointranges = [(q - delta, q + delta) for q in  Q]       
+
         self.uvs_model = uvs.DenavitHartenberg_Cameras_Analytic(cameras=self.cameras, dh_robot=robot)
         self.dh_robot = robot
-        
+        self.jointlimits = jointranges
+        self.dof=dof

@@ -119,7 +119,7 @@ class DenavitHartenberg_Cameras_Analytic():
         return ret, currQ
     
     
-    def central_differences_pp(self, Q, desPP, epsilon=None):
+    def central_differences_pp(self, Q, epsilon=None):
         '''
         Pass the PROJECTED POINTS directly, NOT the real point. 
 
@@ -127,6 +127,8 @@ class DenavitHartenberg_Cameras_Analytic():
 
         the matrix J should be (number of cameras * 2) x (dof)
         '''
+
+        
 
         Q= np.array((Q))
 
