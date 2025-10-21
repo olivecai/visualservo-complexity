@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 '''
 October 20 2025
 
@@ -5,7 +6,7 @@ Uncalibrated Visual Servoing:
 Import dh_robot.py and camera.py 
 '''
 
-from dh_robot import DenavitHartenbergAnalytic
+from .dh_robot import DenavitHartenbergAnalytic
 import numpy as np
 import sympy as sp
 
@@ -119,7 +120,7 @@ class DenavitHartenberg_Cameras_Analytic():
         return ret, currQ
     
     
-    def central_differences_pp(self, Q, epsilon=None):
+    def central_differences_pp(self, Q:list, epsilon=None):
         '''
         Pass the PROJECTED POINTS directly, NOT the real point. 
 

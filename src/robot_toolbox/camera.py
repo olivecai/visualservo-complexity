@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 '''
 Oct 20 2025
 '''

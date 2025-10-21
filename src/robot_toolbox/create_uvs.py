@@ -1,9 +1,10 @@
+#!/usr/bin/env python
 import sympy as sp
-import dh_robot as dh
-import uvs
+from .dh_robot import DHSympyParams, DenavitHartenbergAnalytic
+from .uvs import DenavitHartenberg_Cameras_Analytic
 import numpy as np
 
-P = dh.DHSympyParams()
+P = DHSympyParams()
 jntspace, cartspace, taskspace = P.get_params()
 t0, t1, t2, t3, t4, t5, t6, t7, t8, t9 = jntspace
 x, y, z = cartspace
@@ -73,23 +74,23 @@ class UVS:
         robot=None
         match name:
             case 'puma':
-                robot = dh.DenavitHartenbergAnalytic(puma_dh_params, P)
+                robot = DenavitHartenbergAnalytic(puma_dh_params, P)
                 Q = [.524,-1.047,2.094,0.,-1.571,1.571]
                 
             case 'dof2':
-                robot = dh.DenavitHartenbergAnalytic(dof2_params, P)
+                robot = DenavitHartenbergAnalytic(dof2_params, P)
                 Q = [0.1,2.0]
             case 'dof3':
-                robot = dh.DenavitHartenbergAnalytic(dylan_dof3_params, P)
+                robot = DenavitHartenbergAnalytic(dylan_dof3_params, P)
                 Q = [0.,1.,-1.8]            
             case 'kinova':
-                robot = dh.DenavitHartenbergAnalytic(kinova_dof7_params, P)
+                robot = DenavitHartenbergAnalytic(kinova_dof7_params, P)
                 Q = np.deg2rad(np.array([-0.1336059570312672, -28.57940673828129, -179.4915313720703, -147.7, 0.06742369383573531, -57.420898437500036, 89.88030242919922, 0.5])).tolist()
             case 'jaco':
-                robot = dh.DenavitHartenbergAnalytic(jaco_dh_params, P)
+                robot = DenavitHartenbergAnalytic(jaco_dh_params, P)
                 Q = [0.0, 0.6, -1.0, 1.5, 0.0, 0.0]
             case 'dof4':
-                robot = dh.DenavitHartenbergAnalytic(dof4_params, P)
+                robot = DenavitHartenbergAnalytic(dof4_params, P)
                 initQ=[0. ,1.2, -1.0, -1.2]
             case _:
                 raise ValueError("Unknown robot name")  
@@ -99,7 +100,7 @@ class UVS:
         delta = np.pi / 4
         jointranges = [(q - delta, q + delta) for q in  Q]       
 
-        self.uvs_model = uvs.DenavitHartenberg_Cameras_Analytic(cameras=self.cameras, dh_robot=robot)
+        self.uvs_model = DenavitHartenberg_Cameras_Analytic(cameras=self.cameras, dh_robot=robot)
         self.dh_robot = robot
         self.jointlimits = jointranges
         self.dof=dof
