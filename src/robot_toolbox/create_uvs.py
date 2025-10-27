@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import sympy as sp
+from .camera import Camera
 from .dh_robot import DHSympyParams, DenavitHartenbergAnalytic
 from .uvs import DenavitHartenberg_Cameras_Analytic
 import numpy as np
@@ -60,9 +61,9 @@ puma_dh_params = [
     [t5,     0.0 , 0.0,     0.0     ]   # Joint 6
 ]
 
-cam0 = dh.Camera(0,0,0,[0,0,4], 4,4, 0, 0) 
-cam1 = dh.Camera(0.1,0.05,0,[0,0,4], 4,4, 0, 0) 
-cam2 = dh.Camera(-sp.pi/2, 0, 0.5, [0,0,4], 4,4,0,0) #looks at scene from the y axis, world z is cam2 y, world x is cam2 x 
+cam0 = Camera(0,0,0,[0,0,4], 4,4, 0, 0) 
+cam1 = Camera(0.1,0.05,0,[0,0,4], 4,4, 0, 0) 
+cam2 = Camera(-sp.pi/2, 0, 0.5, [0,0,4], 4,4,0,0) #looks at scene from the y axis, world z is cam2 y, world x is cam2 x 
 cameras=[cam0, cam1, cam2]
 
 class UVS:

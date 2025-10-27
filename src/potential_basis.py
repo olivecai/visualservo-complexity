@@ -63,7 +63,7 @@ class JacobianBasis:
             pass
 
         phi_vector = np.array(phi_vector)
-        logger.info("Phi vector:",phi_vector)
+        logger.info(f"Phi vector: {phi_vector}")
 
         return phi_vector
 
@@ -109,7 +109,7 @@ class JacobianBasis:
             jacobians.append(J)
         return jacobians
     
-    def get_coefficient_matrix(self, joint_configs, jacobian_data, phi: function):
+    def get_coefficient_matrix(self, joint_configs, jacobian_data):
         '''
 
         Given joint configs and their corresponding Jacobians,
@@ -151,8 +151,8 @@ class JacobianBasis:
         J_matrix = np.array(J_vectors)  # shape: (N, m*n) where J is m x n
 
         phi = np.array([self.phi(q) for q in joint_configs]) # shape: (N,K)
-        logger.info("phi:", phi)
-        logger.info("J_matrix:", J_matrix)
+        logger.info(f"phi: {phi}")
+        logger.info(f"J_matrix: {J_matrix}")
         logger.info(f"phi shape: {phi.shape}, J_matrix shape: {J_matrix.shape}")
         # perform the linear regression to obtain coefficient matrix A:
         coeff_matrix, residuals, rank, s = np.linalg.lstsq(phi, J_matrix, rcond=None) # shape: (K, m*n) 
@@ -178,10 +178,10 @@ class JacobianBasis:
                 J_true = self.uvs.uvs_model.central_differences_pp(Q=q)
                 L2_error = np.linalg.norm(J_approximated-J_true, ord=2)
 
-                logging.info("JOINT CONFIGURATION:\n", q)
-                logging.info("COMPUTED JACOBIAN:\n", J_approximated)
-                logging.info("TRUE JACOBIAN:\n", J_true)
-                logging.info("L2 ERROR:", L2_error)
+                logger.info("JOINT CONFIGURATION:\n", q)
+                logger.info("COMPUTED JACOBIAN:\n", J_approximated)
+                logger.info("TRUE JACOBIAN:\n", J_true)
+                lo.info("L2 ERROR:", L2_error)
 
                 
         except Exception as e:

@@ -115,7 +115,7 @@ class DenavitHartenbergAnalytic():
             #print(diff)
             Jt[i] = diff / (2*epsilon)
 
-        logger.info("Central differences Jacobian:", Jt.T)
+        logger.info("Central differences Jacobian: {Jt.T}")
 
         return Jt.T
     
@@ -135,7 +135,7 @@ class DenavitHartenbergAnalytic():
             links.append(rtb.RevoluteDH(alpha = self.dh_params[i][1], a=self.dh_params[i][2], d=self.dh_params[i][3]))
 
         robot = rtb.DHRobot(links, name=f"robot_{self.dof}dof")
-        logger.info("RTB robot:", robot)
+        logger.info("RTB robot: {robot}")
 
         return robot
     
@@ -144,6 +144,6 @@ class DenavitHartenbergAnalytic():
             logger.info("Q = None: Sending 0 to all joints.")
             Q = [0.0] * self.dof
         blocking = True
-        logger.info("Plotting robot, block==", blocking)
+        logger.info(f"Plotting robot, block == {blocking}")
         self.rtb_robot.plot(Q, block=blocking)
         
