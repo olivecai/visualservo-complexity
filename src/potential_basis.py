@@ -58,12 +58,21 @@ class JacobianBasis:
 
         # q is some vector: q1, q2, q3, ..., qdof
         # for now our basis can be very basic:
+
+        sin_q = np.sin(q)
+        cos_q = np.cos(q)
+        
+        trig_poly = PolynomialFeatures(polynomial_degree)
+        trig_phi_vector = poly.fit_transform()
+
         poly = PolynomialFeatures(polynomial_degree)
         phi_vector = poly.fit_transform(q)
 
-        if trigonometric: # for now let's not implement this: let's see how far the polynomial basis gets us.
+        if trigonometric: 
             phi_vector = np.hstack([
                 phi_vector,
+                # np.sin(q)*np.cos(q),
+
                 np.sin(q),       # sin(x1), sin(x2)
                 np.cos(q)        # cos(x1), cos(x2)
             ])
@@ -196,7 +205,7 @@ class JacobianBasis:
 
 
 
-    def evaluate_goodness_of_fit(self, coefficient_matrix:np.ndarray, num_pnts_per_traj=int, num_trajectories = int):
+    def evaluate_goodness_of_fit(self, coefficient_matrix:np.ndarray,  num_trajectories = int, num_pnts_per_traj=int):
         '''
         Evaluate goodness of fit of regression model (given coefficient matrix) over a series of random joint trajectories.
         '''
@@ -220,14 +229,22 @@ class JacobianBasis:
 
         ncols = number_of_cameras
         nrows=1
-        fig, axs = plt.subplots(nrows, ncols, figsize=(4 * ncols, 4 * nrows))
+        fig, axs = plt.subplots(nrows, ncols, figsize=(4 * ncols, 4 * nrows), layout='constrained')
         
         for i in range(number_of_cameras):
             camera_i = np.array(projections[i]).T
-            ax= axs[i]
-            ax.scatter(camera_i[0],camera_i[1], c=colors, cmap = 'viridis')
-            ax.set_title(f"Camera {i} Projection")
-        plt.tight_layout()
+            try:
+                ax= axs[i]
+            except:
+                ax=axs
+            mappable = ax.scatter(camera_i[0],camera_i[1], c=colors, cmap = 'viridis')
+            ax.set_title(f"Camera {i} Projection Goodness of Fit")
+
+        try:
+            fig.colorbar(mappable, ax=axs.ravel().tolist())
+        except:
+            fig.colorbar(mappable, ax=axs)
+        
         plt.show()
             
         
@@ -237,13 +254,13 @@ class JacobianBasis:
 
 
 def main():
-    uvs = UVS('dof2', [0,1]) #2 dof arm with a direct projection onto the scene from above
+    uvs = UVS('dof2', [0]) #2 dof arm with a direct projection onto the scene from above
     jacobian_basis = JacobianBasis(uvs)
-    sample_joints, sample_jacobians = jacobian_basis.collect_data(5, 1)
+    sample_joints, sample_jacobians = jacobian_basis.collect_data(5,1)
     coeff_mat = jacobian_basis.get_coefficient_matrix(sample_joints, sample_jacobians)
 
     # jacobian_basis.get_approximate_jacobian_from_regression_model(coefficient_matrix=coeff_mat)
   
-    jacobian_basis.evaluate_goodness_of_fit(coeff_mat, 100,5)
+    jacobian_basis.evaluate_goodness_of_fit(coeff_mat, 10000,5)
 
 main()
