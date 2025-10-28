@@ -12,7 +12,9 @@ Some notes on Jacobian basis function fitting:
 but for now we can use one function for the entire space (thus choose a slightly smaller joint region)
 
 '''
+from sklearn.preprocessing import PolynomialFeatures
 from robot_toolbox.create_uvs import UVS
+import matplotlib.pyplot as plt
 
 import numpy as np
 import sympy as sp
@@ -38,12 +40,13 @@ class JacobianBasis:
         
         '''
         self.m : int = self.uvs.dof
-        self.K :int = (self.phi([0]*self.m).shape[0]) 
+        self.K :int = (self.phi(np.array([[0]*self.m])).shape[0]) 
         self.n : int = len(self.uvs.cameras) * 2
 
 
-    def phi(self, q):
+    def phi(self, q : np.array):
         '''
+        pass q as np.array([[q1_1,...q1_dof],[q2_1,...,q2_dof,...qN_11,...qN_dof]]) where N is the number of sample points to regress over.
         phi is the vector that contains our basis columns. 
         to modify the basis, change the variables below for polynomial_degree, trigonometric, etc.
         '''
@@ -55,14 +58,16 @@ class JacobianBasis:
 
         # q is some vector: q1, q2, q3, ..., qdof
         # for now our basis can be very basic:
-        phi_vector = []
-        for k in range(1,polynomial_degree+1):
-            for i in range(len(self.uvs.dof)):
-                phi_vector.append(q[i]**k)
-        if trigonometric: # for now let's not implement this: let's see how far the polynomial basis gets us.
-            pass
+        poly = PolynomialFeatures(polynomial_degree)
+        phi_vector = poly.fit_transform(q)
 
-        phi_vector = np.array(phi_vector)
+        if trigonometric: # for now let's not implement this: let's see how far the polynomial basis gets us.
+            phi_vector = np.hstack([
+                phi_vector,
+                np.sin(q),       # sin(x1), sin(x2)
+                np.cos(q)        # cos(x1), cos(x2)
+            ])
+
         logger.info(f"Phi vector: {phi_vector}")
 
         return phi_vector
@@ -149,15 +154,17 @@ class JacobianBasis:
         # unravel jacobian: 
         J_vectors = [J.flatten() for J in jacobian_data]
         J_matrix = np.array(J_vectors)  # shape: (N, m*n) where J is m x n
+        print(np.array(joint_configs))
+        phi = self.phi(np.array(joint_configs)) # shape: (N,K)
 
-        phi = np.array([self.phi(q) for q in joint_configs]) # shape: (N,K)
         logger.info(f"phi: {phi}")
         logger.info(f"J_matrix: {J_matrix}")
         logger.info(f"phi shape: {phi.shape}, J_matrix shape: {J_matrix.shape}")
         # perform the linear regression to obtain coefficient matrix A:
         coeff_matrix, residuals, rank, s = np.linalg.lstsq(phi, J_matrix, rcond=None) # shape: (K, m*n) 
-        logger.info(f"Fitted basis function with residuals: {residuals}")
-        logger.info(f"Coefficient matrix: {coeff_matrix}")
+        logger.info(f"Residuals: {residuals}")
+        logger.info(f"Coefficient matrix:\n {coeff_matrix}")
+
         return coeff_matrix  # shape: (K, m*n)
 
     
@@ -165,35 +172,54 @@ class JacobianBasis:
         '''
         Get user input q and evaluate those joints, then evaluate a series of joints and return the accuracy/goodness of the model.
         '''
-        logger.info("Evluating the regression model with various joint configurations q:")
+        logger.info("Evaluating the regression model with various joint configurations q:")
     
         try:
             while True:
                 q_input_str = input("Enter joints in radians as q1,q2, ..., qdof:")
                 
                 q = [float(x) for x in q_input_str.split(',')]
-                J_approximated = self.phi(q) @ coefficient_matrix # (1,K) @ (K, (m*n))
-                J_approximated.reshape(self.m, self.n)
-
+                logger.info(f"JOINT CONFIGURATION:\n{q}")
                 J_true = self.uvs.uvs_model.central_differences_pp(Q=q)
+                logger.info(f"TRUE JACOBIAN:\n{J_true}")
+                J_approximated = self.phi([np.array(q)]) @ coefficient_matrix # (1,K) @ (K, (m*n))
+                J_approximated =J_approximated.reshape(self.m, self.n)
+                logger.info(f"COMPUTED JACOBIAN:\n{J_approximated}")
+
                 L2_error = np.linalg.norm(J_approximated-J_true, ord=2)
 
-                logger.info("JOINT CONFIGURATION:\n", q)
-                logger.info("COMPUTED JACOBIAN:\n", J_approximated)
-                logger.info("TRUE JACOBIAN:\n", J_true)
-                lo.info("L2 ERROR:", L2_error)
+                logger.info(f"L2 ERROR:\n{L2_error}")
 
                 
         except Exception as e:
             logging.info("\nError occurred: {}; exiting program.".format(e))
 
+    def evaluate_goodness_of_fit(self, coefficient_matrix:np.ndarray, num_pnts_per_traj=int, num_trajectories = int):
+        '''
+        Evaluate goodness of fit of regression model (given coefficient matrix) over a series of random joint trajectories.
+        '''
+        joint_configs, jacobians = self.collect_data(num_pnts_per_traj=num_pnts_per_traj, num_trajectories=num_trajectories)
+        total_error = 0.0
+        for q, J_true in zip(joint_configs, jacobians):
+                J_approximated = self.phi([np.array(q)]) @ coefficient_matrix # (1,K) @ (K, (m*n))
+                J_approximated =J_approximated.reshape(self.m, self.n)
+                L2_error = np.linalg.norm(J_approximated-J_true, ord=2)
+                total_error += L2_error
+        avg_error = total_error / len(joint_configs)
+        
+        # plot fkin(q) points with the jacobian goodness
+        
+
+
+
+
+
 def main():
     uvs = UVS('dof2', [0]) #2 dof arm with a direct projection onto the scene from above
     jacobian_basis = JacobianBasis(uvs)
-    sample_joints, sample_jacobians = jacobian_basis.collect_data(10, 5)
+    sample_joints, sample_jacobians = jacobian_basis.collect_data(50, 5)
     coeff_mat = jacobian_basis.get_coefficient_matrix(sample_joints, sample_jacobians)
     jacobian_basis.get_approximate_jacobian_from_regression_model(coefficient_matrix=coeff_mat)
 
-    
 
-
+main()

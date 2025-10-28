@@ -56,5 +56,5 @@ class Camera:
         x[0]=x[0]/x[2]
         x[1]=x[1]/x[2]
         x[2]=1#'''
-        logger.info(f"Projected Point: {sp.Matrix([[x[0]],[x[1]]])}")
+        # logger.info(f"Projected Point: {sp.Matrix([[x[0]],[x[1]]])}")
         return sp.Matrix([[x[0]],[x[1]]])
