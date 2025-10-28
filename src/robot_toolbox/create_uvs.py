@@ -105,3 +105,19 @@ class UVS:
         self.dh_robot = robot
         self.jointlimits = jointranges
         self.dof=dof
+
+    def get_projections(self, Q:list):
+        '''
+        Q: list of lists
+        Given Q, a list of joint angles, return the numpy matrix of all camera projections of the points, projections.
+        projections is shape (2 * num_cameras, num angle pairs in Q)
+        '''
+        projections = []
+        for cam in self.cameras:
+            cam : Camera = cam
+            cam_projections = []
+            for q in Q: 
+                cam_projections.append(cam.projectpoint(self.dh_robot.fkin_eval(*q)).flat())
+            projections.append(cam_projections)
+        return projections
+

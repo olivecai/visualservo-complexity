@@ -194,20 +194,42 @@ class JacobianBasis:
         except Exception as e:
             logging.info("\nError occurred: {}; exiting program.".format(e))
 
+
+
     def evaluate_goodness_of_fit(self, coefficient_matrix:np.ndarray, num_pnts_per_traj=int, num_trajectories = int):
         '''
         Evaluate goodness of fit of regression model (given coefficient matrix) over a series of random joint trajectories.
         '''
+
         joint_configs, jacobians = self.collect_data(num_pnts_per_traj=num_pnts_per_traj, num_trajectories=num_trajectories)
         total_error = 0.0
+        colors=[]
         for q, J_true in zip(joint_configs, jacobians):
                 J_approximated = self.phi([np.array(q)]) @ coefficient_matrix # (1,K) @ (K, (m*n))
-                J_approximated =J_approximated.reshape(self.m, self.n)
+                J_approximated =J_approximated.reshape(self.n, self.m)
                 L2_error = np.linalg.norm(J_approximated-J_true, ord=2)
                 total_error += L2_error
+                colors.append(L2_error)
         avg_error = total_error / len(joint_configs)
-        
+        logger.info(f"Average error: {avg_error}")
         # plot fkin(q) points with the jacobian goodness
+        projections = self.uvs.get_projections(np.array(joint_configs).tolist())
+        
+        #projections is [cam1, cam2]
+        number_of_cameras = int (self.n / 2)
+
+        ncols = number_of_cameras
+        nrows=1
+        fig, axs = plt.subplots(nrows, ncols, figsize=(4 * ncols, 4 * nrows))
+        
+        for i in range(number_of_cameras):
+            camera_i = np.array(projections[i]).T
+            ax= axs[i]
+            ax.scatter(camera_i[0],camera_i[1], c=colors, cmap = 'viridis')
+            ax.set_title(f"Camera {i} Projection")
+        plt.tight_layout()
+        plt.show()
+            
         
 
 
@@ -215,11 +237,13 @@ class JacobianBasis:
 
 
 def main():
-    uvs = UVS('dof2', [0]) #2 dof arm with a direct projection onto the scene from above
+    uvs = UVS('dof2', [0,1]) #2 dof arm with a direct projection onto the scene from above
     jacobian_basis = JacobianBasis(uvs)
-    sample_joints, sample_jacobians = jacobian_basis.collect_data(50, 5)
+    sample_joints, sample_jacobians = jacobian_basis.collect_data(5, 1)
     coeff_mat = jacobian_basis.get_coefficient_matrix(sample_joints, sample_jacobians)
-    jacobian_basis.get_approximate_jacobian_from_regression_model(coefficient_matrix=coeff_mat)
 
+    # jacobian_basis.get_approximate_jacobian_from_regression_model(coefficient_matrix=coeff_mat)
+  
+    jacobian_basis.evaluate_goodness_of_fit(coeff_mat, 100,5)
 
 main()

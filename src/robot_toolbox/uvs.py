@@ -52,7 +52,6 @@ class DenavitHartenberg_Cameras_Analytic():
         self.jacobian_eval = (sp.utilities.lambdify(variables, self.J, 'numpy')) #ah, same goes for this function...
         #now self.F should be the equation of the projection, errfn_eval will evaluate F given the params
 
-        self.lipschitz=None
 
     def projected_errfn_eval(self, initQ, desPP):
         #for each camera project the end effector point and subtract the desired point
