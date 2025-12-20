@@ -20,6 +20,10 @@ import numpy as np
 import sympy as sp
 import logging
 
+import os
+from datetime import datetime
+import sys
+
 # Configure basic logging to the console (default level is WARNING)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__) # Get a logger for the current module
@@ -39,49 +43,57 @@ class JacobianBasis:
         set; collect data, get the coefficient matrix, then validate that model by get_approximate_jacobian_from_regression_model.
         
         '''
-        self.m : int = self.uvs.dof
-        self.K :int = (self.phi(np.array([[0]*self.m])).shape[0]) 
+    
+        self.m : int = self.uvs.dof #dof
+        self.phi_degree = None
         self.n : int = len(self.uvs.cameras) * 2
+        logger.info(f"m: {self.m}, phi_degree: {self.phi_degree}, n: {self.n}")
+
+    def set_phi(self, phi_deg, phi_type):
+        self.phi_degree = phi_deg
+        self.phi=phi_type
+        self.K :int = (self.phi(np.array([[0]*self.m])).shape[1]) 
 
 
-    def phi(self, q : np.array):
+    def polynomial_phi(self, q : np.array):
         '''
         pass q as np.array([[q1_1,...q1_dof],[q2_1,...,q2_dof,...qN_11,...qN_dof]]) where N is the number of sample points to regress over.
         phi is the vector that contains our basis columns. 
         to modify the basis, change the variables below for polynomial_degree, trigonometric, etc.
         '''
+        poly = PolynomialFeatures(self.phi_degree)
+        phi_vector = poly.fit_transform(q)
 
-        ##### CHANGE BASIS VARIABLEs/COLUMNS BELOW #####
-        polynomial_degree : int = 2 # 1 for linear, 2 for quadratic, so on so forth
-        trigonometric : bool = True
-        ################################################
-
+        return phi_vector
+    
+    def trigonometric_phi(self, q : np.array):
+        '''
+        pass q as np.array([[q1_1,...q1_dof],[q2_1,...,q2_dof,...qN_11,...qN_dof]]) where N is the number of sample points to regress over.
+        phi is the vector that contains our basis columns. 
+        to modify the basis, change the variables below for polynomial_degree, trigonometric, etc.
+        '''
         # q is some vector: q1, q2, q3, ..., qdof
         # for now our basis can be very basic:
 
         sin_q = np.sin(q)
         cos_q = np.cos(q)
+
+        logger.info(f"sin_q: {sin_q}")
+        logger.info(f"cos q: {cos_q}")
+
+        trig_q = np.concatenate((sin_q, cos_q), axis=1)
+        logger.info(f"trig q: {trig_q}")
         
-        trig_poly = PolynomialFeatures(polynomial_degree)
-        trig_phi_vector = poly.fit_transform()
+        
+        trig_poly = PolynomialFeatures(self.phi_degree)
+        trig_phi_vector = trig_poly.fit_transform(trig_q)
 
-        poly = PolynomialFeatures(polynomial_degree)
-        phi_vector = poly.fit_transform(q)
+        logger.info(f"Phi vector: {trig_phi_vector}")
 
-        if trigonometric: 
-            phi_vector = np.hstack([
-                phi_vector,
-                # np.sin(q)*np.cos(q),
+        return trig_phi_vector
+        
 
-                np.sin(q),       # sin(x1), sin(x2)
-                np.cos(q)        # cos(x1), cos(x2)
-            ])
-
-        logger.info(f"Phi vector: {phi_vector}")
-
-        return phi_vector
-
-    def collect_data(self, num_trajectories=50, num_pnts_per_traj=5):
+    def collect_data(self, num_trajectories=50, num_pnts_per_traj=5, rng=None):
         '''
         Collect data for fitting the basis function.
         num_samples: number of samples to collect
@@ -90,27 +102,31 @@ class JacobianBasis:
         num_samples = num_trajectories * num_pnts_per_traj
         logger.info(f"Collecting {num_samples} samples for basis function fitting...")
         # first we collect sample joint-jacobian pairs to fit our basis.
-        joint_configs = self.generate_joint_samples_via_trajectory(num_trajectories, num_pnts_per_traj)
+        joint_configs = self.generate_joint_samples_via_trajectory(num_trajectories, num_pnts_per_traj, rng=rng)
         jacobian_data = self.generate_jacobians_given_joint_configs(joint_configs)
         return joint_configs, jacobian_data
-
-    def generate_joint_samples_via_trajectory(self, num_trajectories, num_pnts_per_traj):
-        '''
-        TO BE USED IN "collect_data"
-
-        Returns a list of joint configurations sampled over the joint space with the uvs.jointlimits
         
-        For num_trajectories, generate random linear trajectories in joint space, and sample num_pnts_per_traj points along each trajectory.
+    def generate_joint_samples_via_trajectory(self, num_trajectories, num_pnts_per_traj, rng=None):
         '''
+        Reproducible random generator-based sampling.
+        '''
+        if rng is None:
+            rng = np.random.default_rng()
+
         joint_configs = []
+
         for _ in range(num_trajectories):
-            start_q = np.array([np.random.uniform(low, high) for (low, high) in self.uvs.jointlimits])
-            end_q = np.array([np.random.uniform(low, high) for (low, high) in self.uvs.jointlimits])
+            start_q = np.array([rng.uniform(low, high) 
+                                for (low, high) in self.uvs.jointlimits])
+            end_q = np.array([rng.uniform(low, high) 
+                            for (low, high) in self.uvs.jointlimits])
+
             for t in np.linspace(0, 1, num_pnts_per_traj):
                 q = (1 - t) * start_q + t * end_q
                 joint_configs.append(q)
+
         return joint_configs
-    
+
     def generate_jacobians_given_joint_configs(self, joint_configs):
         '''
         TO BE USED IN "collect_data"
@@ -136,12 +152,12 @@ class JacobianBasis:
 
         Dimensions sanity check:
         N is the number of datapoints we collect.
-        m is the number of task space coordinates
-        n is the number of dof 
+        n is the number of task space coordinates
+        m is the number of dof 
         K is the number of basis columns
 
         Then, 
-        Jacobian is shape (m, n)
+        Jacobian is shape (n, m)
         Flattened Jacobian is shape (1, m*n)
         Flattened Jacobian Matrix is shape (N, m*n)
 
@@ -156,7 +172,7 @@ class JacobianBasis:
         Then if we want to solve for any arbitrary new joint q:
         q is shape (1, n)
         phi is shape (1,K)
-        J_new = phi @ coeff matrix, so J_new shape (1,m*n). Then we may reshape the Jacobian to become (m,n).
+        J_new = phi @ coeff matrix, so J_new shape (1,m*n). Then we may reshape the Jacobian to become (n,m).
 
         '''
         logger.info("Fitting basis function to collected data...")
@@ -180,6 +196,7 @@ class JacobianBasis:
     def get_approximate_jacobian_from_regression_model(self, coefficient_matrix:np.ndarray):
         '''
         Get user input q and evaluate those joints, then evaluate a series of joints and return the accuracy/goodness of the model.
+        Used for testing small examples
         '''
         logger.info("Evaluating the regression model with various joint configurations q:")
     
@@ -205,12 +222,12 @@ class JacobianBasis:
 
 
 
-    def evaluate_goodness_of_fit(self, coefficient_matrix:np.ndarray,  num_trajectories = int, num_pnts_per_traj=int):
+    def evaluate_goodness_of_fit(self, coefficient_matrix:np.ndarray,  num_trajectories:int, num_pnts_per_traj:int, rng:np.random.Generator, output_folder = 'test', output_name='test'):
         '''
         Evaluate goodness of fit of regression model (given coefficient matrix) over a series of random joint trajectories.
         '''
 
-        joint_configs, jacobians = self.collect_data(num_pnts_per_traj=num_pnts_per_traj, num_trajectories=num_trajectories)
+        joint_configs, jacobians = self.collect_data(num_pnts_per_traj=num_pnts_per_traj, num_trajectories=num_trajectories, rng=rng)
         total_error = 0.0
         colors=[]
         for q, J_true in zip(joint_configs, jacobians):
@@ -220,13 +237,13 @@ class JacobianBasis:
                 total_error += L2_error
                 colors.append(L2_error)
         avg_error = total_error / len(joint_configs)
-        logger.info(f"Average error: {avg_error}")
+        logger.info(f"Average error:\n{avg_error}")
         # plot fkin(q) points with the jacobian goodness
         projections = self.uvs.get_projections(np.array(joint_configs).tolist())
         
         #projections is [cam1, cam2]
         number_of_cameras = int (self.n / 2)
-
+        
         ncols = number_of_cameras
         nrows=1
         fig, axs = plt.subplots(nrows, ncols, figsize=(4 * ncols, 4 * nrows), layout='constrained')
@@ -245,7 +262,14 @@ class JacobianBasis:
         except:
             fig.colorbar(mappable, ax=axs)
         
-        plt.show()
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder, exist_ok=True)
+        path  = os.path.join(output_folder, output_name)
+        plt.savefig(path)
+
+        return avg_error
+        # plt.show()
+        # plt.close()
             
         
 
@@ -254,13 +278,46 @@ class JacobianBasis:
 
 
 def main():
-    uvs = UVS('dof2', [0]) #2 dof arm with a direct projection onto the scene from above
-    jacobian_basis = JacobianBasis(uvs)
-    sample_joints, sample_jacobians = jacobian_basis.collect_data(5,1)
-    coeff_mat = jacobian_basis.get_coefficient_matrix(sample_joints, sample_jacobians)
+    '''
+    Usage example: `python3 ./src/potential_basis.py dof2 0,1 2 5 10 500 10 888 testing`
+    '''
 
-    # jacobian_basis.get_approximate_jacobian_from_regression_model(coefficient_matrix=coeff_mat)
+    params = sys.argv
+    for i in range(0,len(params)):
+        try:
+            params[i] = int(params[i])
+        except:
+            pass
+    _, robot, camera_setup, num_trajs_sample, num_pnts_per_traj_sample, num_trajs_eval, num_pnts_per_traj_eval, phi_degrees, phi_types, random_seed, output_folder= params
+
+    camera_setup = [int(i) for i in camera_setup.split(',')]
+    phi_degrees = [int(i) for i in phi_degrees.split(',')]
+    phi_types = [int(i) for i in phi_types.split(',')] 
+    random_seed = random_seed if random_seed >=0 else None
+
+    logger.info(f"robot: {robot}\ncamera_setup: {camera_setup}\nnum_trajs_sample: {num_trajs_sample}\nnum_pnts_per_traj_sample: {num_pnts_per_traj_sample}\nnum_trajs_eval: {num_trajs_eval}\nnum_pnts_per_traj_eval: {num_pnts_per_traj_eval}\nrandom_seed: {random_seed}\noutput_folder:{output_folder}")
+
+    uvs = UVS(robot, camera_setup) 
+    jacobian_basis = JacobianBasis(uvs)
+    rng = np.random.default_rng(seed=random_seed)
+    sample_joints, sample_jacobians = jacobian_basis.collect_data(num_trajectories=num_trajs_sample,num_pnts_per_traj=num_pnts_per_traj_sample,rng=rng)
+    
+        # jacobian_basis.get_approximate_jacobian_from_regression_model(coefficient_matrix=coeff_mat) #user io test for individual points
   
-    jacobian_basis.evaluate_goodness_of_fit(coeff_mat, 10000,5)
+    
+    for type in phi_types:
+        for deg in phi_degrees:
+            if type==0:
+                phi_type_name = 'polynomial_phi'
+                phi_type=jacobian_basis.polynomial_phi
+            if type==1:
+                phi_type_name = 'trigonometric_phi'
+                phi_type=jacobian_basis.trigonometric_phi
+        
+            jacobian_basis.set_phi(phi_deg=deg, phi_type=phi_type)
+            coeff_mat = jacobian_basis.get_coefficient_matrix(sample_joints, sample_jacobians)
+
+            output_name = f"{robot}-{camera_setup}-{phi_type_name}-{deg}-{num_trajs_sample}-{num_pnts_per_traj_sample}-{num_trajs_eval}-{num_pnts_per_traj_eval}-{random_seed}.png"
+            avg_error = jacobian_basis.evaluate_goodness_of_fit(coeff_mat,num_trajs_eval,num_pnts_per_traj_eval,rng,output_folder=output_folder, output_name=output_name)
 
 main()
