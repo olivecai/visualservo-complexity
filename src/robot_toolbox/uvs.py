@@ -21,13 +21,15 @@ logger = logging.getLogger(__name__) # Get a logger for the current module
 
 class DenavitHartenberg_Cameras_Analytic():
     '''
+    INVOKED BY CREATE_UVS 
+
     initialize a denavit hartenberg system plus camera(s) with analytic symbols, using sympy.
 
     Compare the lipschitz constant of with vs without cameras to see whether cameras majorly affect the complexity (hopefully they do not.)
 
     '''
     # it is important to get the error function F to reduce to 0
-    def __init__(self, cameras: list, dh_robot: DenavitHartenbergAnalytic):
+    def __init__(self, cameras: list, analytic_cameras:list, dh_robot: DenavitHartenbergAnalytic):
         '''
         cameras is a list of Camera objects
         dh_robot is a DenavitHartenbergAnalytic object
@@ -39,13 +41,29 @@ class DenavitHartenberg_Cameras_Analytic():
         self.dh_robot = dh_robot
         self.jntvars, self.cartvars, self.taskvars = dh_robot.jntvars, dh_robot.cartvars, dh_robot.taskvars
 
+        logger.info(f"ANALYTIC FORWARD KINEMATICS WITHOUT CAMERA PROJECTIONS: {self.dh_robot.F}")
+
         self.F = []# is a factor of 2, since each camera gives two projected points.
-        for camera in cameras:
+        # for camera in cameras:
+        #     projected_point = camera.projectpoint(self.dh_robot.F)
+        #     self.F.append(projected_point)  
+        # self.F = sp.Matrix(self.F)
+        # logger.info(f"ANALYTIC FORWARD KINEMATICS WITH CAMERA PROJECTIONS: {self.F}")
+
+        self.F_with_cam_params = []
+        for camera in analytic_cameras:
             projected_point = camera.projectpoint(self.dh_robot.F)
-            self.F.append(projected_point)  
-        self.F = sp.Matrix(self.F)
+            self.F_with_cam_params.append(projected_point)  
+        self.F_with_cam_params = sp.Matrix(self.F_with_cam_params)
+        logger.info(f"ANALYTIC FORWARD KINEMATICS WITH CAMERA PARAM PROJECTIONS: {self.F_with_cam_params}")
+        self.J_for_params_regression = self.F_with_cam_params.jacobian(self.dh_robot.jntvars[:self.dh_robot.dof])
+        logger.info(f"ANALYTIC JACOBIAN WITH CAMERA PROJECTIONS: {self.J_for_params_regression}")
+
 
         self.J = self.F.jacobian(self.dh_robot.jntvars[:self.dh_robot.dof])
+        logger.info(f"ANALYTIC JACOBIAN WITH CAMERA PROJECTIONS: {self.J}")
+
+
 
         variables = dh_robot.jntvars[: dh_robot.dof] + dh_robot.cartvars
         self.errfn_eval= (sp.utilities.lambdify(variables, self.F, 'numpy')) #this uses the TRUE desired point... but that's not accessible in real VS, so we should move away from this function
@@ -144,6 +162,7 @@ class DenavitHartenberg_Cameras_Analytic():
         I = np.identity(p)
     
         for i in range(p):
+
             
             forward = self.projected_world_point(self.dh_robot.fkin_eval(*(Q + epsilon * I[i])))
             

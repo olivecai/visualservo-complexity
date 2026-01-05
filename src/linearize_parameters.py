@@ -1,20 +1,14 @@
 #!/usr/bin/env python
 
 '''
-Oct 20 2025
+Jan 2 2026
 
-First attempt at creating a basis function to represent the visual servoing function.
-We can first try with many different basis functions and analyze the coefficients to determine 
-which functions are effective bases.
+Linearize Parameters of the Jacobian using scipy linearize_eq_to_matrix
 
-Some notes on Jacobian basis function fitting:
-- We will likely need to create region-specific functions to cover the joint space well,
-but for now we can use one function for the entire space (thus choose a slightly smaller joint region)
-
+This is a small test in isolation to get the maths in order
 '''
 from sklearn.preprocessing import PolynomialFeatures
-from robot_toolbox.create_uvs import UVS, analytic_cameras
-from robot_toolbox.dh_robot import DHSympyParams
+from robot_toolbox.create_uvs import UVS
 import matplotlib.pyplot as plt
 
 import numpy as np
@@ -25,13 +19,11 @@ import os
 from datetime import datetime
 import sys
 
+
 # Configure basic logging to the console (default level is WARNING)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__) # Get a logger for the current module
 # logger. debug, info, warning, error, critical
-
-
-P = DHSympyParams()
 
 # create a basis to approximate the UVS function
 class JacobianBasis:
@@ -49,27 +41,7 @@ class JacobianBasis:
         self.m : int = self.uvs.dof #dof
         self.phi_degree = None
         self.n : int = len(self.uvs.cameras) * 2
-        self.linearized_params_jacobian_regressor_matrix = None
         logger.info(f"m: {self.m}, phi_degree: {self.phi_degree}, n: {self.n}")
-
-    def set_phi(self, phi_deg, phi_type):
-        self.phi_degree = phi_deg
-        self.phi=phi_type
-        self.K :int = (self.phi(np.array([[0]*self.m])).shape[1]) 
-
-    def linearize_parameters(self, q : np.array):
-        '''
-        1. given the jacobian with the unknown parameters, use sympy linearize_eq_to_matrix = A,c
-        2. the length of c is the size of the regressor
-
-        '''
-
-        if self.linearized_params_jacobian_regressor_matrix is None:
-            self.linearized_params_jacobian_regressor_matrix, unknown_camera_params = sp.linear_eq_to_matrix(self.uvs.uvs_model.J_for_params_regression.reshape(self.m*self.n, 1), [P.camera_vars])
-            logger.info(f"LINEARIZE PARAMS REGRESSION A:\n{self.linearized_params_jacobian_regressor_matrix}\nREGRESSOR c:{unknown_camera_params}")
-        
-
-
 
     def polynomial_phi(self, q : np.array):
         '''
@@ -340,9 +312,6 @@ def main():
             if type==1:
                 phi_type_name = 'trigonometric_phi'
                 phi_type=jacobian_basis.trigonometric_phi
-            if type==2:
-                phi_type_name = 'linearize_parameters'
-                phi_type = jacobian_basis.linearize_parameters
         
             jacobian_basis.set_phi(phi_deg=deg, phi_type=phi_type)
             coeff_mat = jacobian_basis.get_coefficient_matrix(sample_joints, sample_jacobians)

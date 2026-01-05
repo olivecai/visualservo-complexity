@@ -20,15 +20,18 @@ class DHSympyParams:
     these must be initialized first so that we can use the parameters in the dh system
     '''
     def __init__(self):
-        self.joint_vars = sp.symbols('t(:10)') #t1,t2,t3,...t9
+        self.joint_vars = sp.symbols('t(:10)') #t0, t1,t2,t3,...t9
         t0,t1,t2,t3,t4,t5,t6,t7,t8,t9 = self. joint_vars
         self.cart_space_vars = sp.symbols('x,y,z') #x,y,z
         x,y,z = self.cart_space_vars
         self.task_space_vars = sp.symbols('u,v') #u,v
         u, v = self.task_space_vars
+        self.camera_vars =sp.symbols('cam(:36)')
+        self.link_length_vars = sp.symbols('l(:15)')
+
         
     def get_params(self):
-        return (self.joint_vars, self.cart_space_vars, self.task_space_vars)
+        return (self.joint_vars, self.cart_space_vars, self.task_space_vars, self.camera_vars, self.link_length_vars)
     
 
 class DenavitHartenbergAnalytic():

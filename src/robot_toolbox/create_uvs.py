@@ -6,14 +6,16 @@ from .uvs import DenavitHartenberg_Cameras_Analytic
 import numpy as np
 
 P = DHSympyParams()
-jntspace, cartspace, taskspace = P.get_params()
+jntspace, cartspace, taskspace, c, l = P.get_params()
 t0, t1, t2, t3, t4, t5, t6, t7, t8, t9 = jntspace
 x, y, z = cartspace
 u, v = taskspace
 
+
+
 dof2_params = [
-                [t0, 0, .5, 0], 
-                [t1, 0, .5, 0]
+                [t0, 0, 0.5, 0], 
+                [t1, 0, 0.5, 0]
                 ]
 
 dylan_dof3_params=[
@@ -61,17 +63,25 @@ puma_dh_params = [
     [t5,     0.0 , 0.0,     0.0     ]   # Joint 6
 ]
 
+
 cam0 = Camera(0,0,0,[0,0,4], 4,4, 0, 0) 
 cam1 = Camera(0.1,0.05,0,[0,0,4], 4,4, 0, 0) 
 cam2 = Camera(-sp.pi/2, 0, 0.5, [0,0,4], 4,4,0,0) #looks at scene from the y axis, world z is cam2 y, world x is cam2 x 
+
+
+analytic_cameras = [Camera(c[0],c[1],c[2],[c[3],c[4],c[5]], c[6],c[7], c[8], c[9]), Camera(c[10],c[11],c[12],[c[13],c[14],c[15]], c[16],c[17], c[18], c[19]) , Camera(c[20], c[21],c[22], [c[23],c[24],c[25]], c[26],c[27],c[28],c[29])] #looks at scene from the y axis, world z is cam2 y, world x is cam2 x 
+
+
 cameras=[cam0, cam1, cam2]
 
 class UVS:
 
     def __init__(self, name, cam_idx: list):
         self.cameras=[]
+        self.cameras_analytic=[]
         for i in cam_idx:
             self.cameras.append(cameras[i])
+            self.cameras_analytic.append(analytic_cameras[i])
         robot=None
         match name:
             case 'puma':
@@ -101,7 +111,7 @@ class UVS:
         delta = np.pi / 4
         jointranges = [(q - delta, q + delta) for q in  Q]       
 
-        self.uvs_model = DenavitHartenberg_Cameras_Analytic(cameras=self.cameras, dh_robot=robot)
+        self.uvs_model = DenavitHartenberg_Cameras_Analytic(cameras=self.cameras, analytic_cameras=self.cameras_analytic, dh_robot=robot)
         self.dh_robot = robot
         self.jointlimits = jointranges
         self.dof=dof
