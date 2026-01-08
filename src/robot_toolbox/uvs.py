@@ -44,11 +44,11 @@ class DenavitHartenberg_Cameras_Analytic():
         logger.info(f"ANALYTIC FORWARD KINEMATICS WITHOUT CAMERA PROJECTIONS: {self.dh_robot.F}")
 
         self.F = []# is a factor of 2, since each camera gives two projected points.
-        # for camera in cameras:
-        #     projected_point = camera.projectpoint(self.dh_robot.F)
-        #     self.F.append(projected_point)  
-        # self.F = sp.Matrix(self.F)
-        # logger.info(f"ANALYTIC FORWARD KINEMATICS WITH CAMERA PROJECTIONS: {self.F}")
+        for camera in cameras:
+            projected_point = camera.projectpoint(self.dh_robot.F)
+            self.F.append(projected_point)  
+        self.F = sp.Matrix(self.F)
+        logger.info(f"ANALYTIC FORWARD KINEMATICS WITH CAMERA PROJECTIONS: {self.F}")
 
         self.F_with_cam_params = []
         for camera in analytic_cameras:

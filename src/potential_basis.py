@@ -57,17 +57,12 @@ class JacobianBasis:
         self.phi=phi_type
         self.K :int = (self.phi(np.array([[0]*self.m])).shape[1]) 
 
-    def linearize_parameters(self, q : np.array):
+    def kinematic_structure_phi(self, q : np.array):
         '''
-        1. given the jacobian with the unknown parameters, use sympy linearize_eq_to_matrix = A,c
-        2. the length of c is the size of the regressor
-
+        suppose Jacobian(q)= N(q)/D(q). 
+        Assume D(q) is constant.
         '''
-
-        if self.linearized_params_jacobian_regressor_matrix is None:
-            self.linearized_params_jacobian_regressor_matrix, unknown_camera_params = sp.linear_eq_to_matrix(self.uvs.uvs_model.J_for_params_regression.reshape(self.m*self.n, 1), [P.camera_vars])
-            logger.info(f"LINEARIZE PARAMS REGRESSION A:\n{self.linearized_params_jacobian_regressor_matrix}\nREGRESSOR c:{unknown_camera_params}")
-        
+        pass
 
 
 
@@ -91,6 +86,7 @@ class JacobianBasis:
         # q is some vector: q1, q2, q3, ..., qdof
         # for now our basis can be very basic:
 
+    
         sin_q = np.sin(q)
         cos_q = np.cos(q)
 
@@ -99,7 +95,6 @@ class JacobianBasis:
 
         trig_q = np.concatenate((sin_q, cos_q), axis=1)
         logger.info(f"trig q: {trig_q}")
-        
         
         trig_poly = PolynomialFeatures(self.phi_degree)
         trig_phi_vector = trig_poly.fit_transform(trig_q)
@@ -238,12 +233,11 @@ class JacobianBasis:
 
 
 
-    def evaluate_goodness_of_fit(self, coefficient_matrix:np.ndarray,  num_trajectories:int, num_pnts_per_traj:int, rng:np.random.Generator, output_folder = 'test', output_name='test'):
+    def evaluate_goodness_of_fit(self, coefficient_matrix:np.ndarray, joint_configs, jacobians, output_folder = 'test', output_name='test'):
         '''
         Evaluate goodness of fit of regression model (given coefficient matrix) over a series of random joint trajectories.
         '''
 
-        joint_configs, jacobians = self.collect_data(num_pnts_per_traj=num_pnts_per_traj, num_trajectories=num_trajectories, rng=rng)
         total_error = 0.0
         colors=[]
         for q, J_true in zip(joint_configs, jacobians):
@@ -289,8 +283,107 @@ class JacobianBasis:
             
         
 
+def symbolic_trigonometric_phi(dof, degree):
+    """
+    Returns a list of symbolic basis terms corresponding
+    to trigonometric_phi + PolynomialFeatures(degree)
+    """
+
+    # symbolic joints
+    q = sp.symbols(f'q0:{dof}')  # (q0, q1, ..., q_{dof-1})
+
+    # sin/cos stack (same structure as numeric code)
+    sin_q = sp.Matrix([sp.sin(qi) for qi in q])
+    cos_q = sp.Matrix([sp.cos(qi) for qi in q])
+
+    trig_q = sp.Matrix.vstack(sin_q, cos_q)
+
+    # sklearn polynomial feature structure
+    poly = PolynomialFeatures(degree, include_bias=True)
+
+    # dummy numeric input JUST to get powers_
+    dummy = np.zeros((1, trig_q.shape[0]))
+    poly.fit(dummy)
+
+    powers = poly.powers_  # shape: (K, 2*dof)
+
+    # build symbolic monomials
+    basis = []
+    for row in powers:
+        term = 1
+        for base, power in zip(trig_q, row):
+            if power != 0:
+                term *= base**power
+        basis.append(sp.simplify(term))
+
+    return basis
+
+def symbolic_trigonometric_phi(dof, degree):
+    """
+    Returns a list of symbolic basis terms corresponding
+    to trigonometric_phi + PolynomialFeatures(degree)
+    """
+
+    # symbolic joints
+    q = sp.symbols(f'q0:{dof}')  # (q0, q1, ..., q_{dof-1})
+
+    # sin/cos stack (same structure as numeric code)
+    sin_q = sp.Matrix([sp.sin(qi) for qi in q])
+    cos_q = sp.Matrix([sp.cos(qi) for qi in q])
+
+    trig_q = sp.Matrix.vstack(sin_q, cos_q)
+
+    # sklearn polynomial feature structure
+    poly = PolynomialFeatures(degree, include_bias=True)
+
+    # dummy numeric input JUST to get powers_
+    dummy = np.zeros((1, trig_q.shape[0]))
+    poly.fit(dummy)
+
+    powers = poly.powers_  # shape: (K, 2*dof)
+
+    # build symbolic monomials
+    basis = []
+    for row in powers:
+        term = 1
+        for base, power in zip(trig_q, row):
+            if power != 0:
+                term *= base**power
+        basis.append(term)
+
+    return basis
 
 
+def symbolic_polynomial_phi(dof, degree):
+    """
+    Returns a list of symbolic basis terms corresponding
+    to PolynomialFeatures(degree)
+    """
+
+    # symbolic joints
+    q = sp.symbols(f'q0:{dof}')  # (q0, q1, ..., q_{dof-1})
+    q_vec = sp.Matrix([qi for qi in q])
+ 
+
+    # sklearn polynomial feature structure
+    poly = PolynomialFeatures(degree, include_bias=True)
+
+    # dummy numeric input JUST to get powers_
+    dummy = np.zeros((1, q_vec.shape[0]))
+    poly.fit(dummy)
+
+    powers = poly.powers_  # shape: (K, 2*dof)
+
+    # build symbolic monomials
+    basis = []
+    for row in powers:
+        term = 1
+        for base, power in zip(q, row):
+            if power != 0:
+                term *= base**power
+        basis.append(term)
+
+    return basis
 
 
 def main():
@@ -315,39 +408,72 @@ def main():
             params[i] = int(params[i])
         except:
             pass
-    _, robot, camera_setup, num_trajs_sample, num_pnts_per_traj_sample, num_trajs_eval, num_pnts_per_traj_eval, phi_degrees, phi_types, random_seed, output_folder= params
+    _, robot, camera_setup_str, num_trajs_sample, num_pnts_per_traj_sample, num_trajs_eval, num_pnts_per_traj_eval, phi_degrees_str, phi_types_str, random_seed, output_folder= params
 
-    camera_setup = [int(i) for i in str(camera_setup).split(',')]
-    phi_degrees = [int(i) for i in str(phi_degrees).split(',')]
-    phi_types = [int(i) for i in str(phi_types).split(',')] 
-    random_seed = random_seed if random_seed >=0 else None
+    camera_setup = [int(i) for i in str(camera_setup_str).split(',')]
+    phi_degrees = [int(i) for i in str(phi_degrees_str).split(',')]
+    phi_types = [int(i) for i in str(phi_types_str).split(',')] 
+    random_seed = int(random_seed) if int(random_seed) >=0 else None
 
     logger.info(f"robot: {robot}\ncamera_setup: {camera_setup}\nnum_trajs_sample: {num_trajs_sample}\nnum_pnts_per_traj_sample: {num_pnts_per_traj_sample}\nnum_trajs_eval: {num_trajs_eval}\nnum_pnts_per_traj_eval: {num_pnts_per_traj_eval}\nrandom_seed: {random_seed}\noutput_folder:{output_folder}")
 
     uvs = UVS(robot, camera_setup) 
     jacobian_basis = JacobianBasis(uvs)
     rng = np.random.default_rng(seed=random_seed)
-    sample_joints, sample_jacobians = jacobian_basis.collect_data(num_trajectories=num_trajs_sample,num_pnts_per_traj=num_pnts_per_traj_sample,rng=rng)
-    
+
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder, exist_ok=True)
+
         # jacobian_basis.get_approximate_jacobian_from_regression_model(coefficient_matrix=coeff_mat) #user io test for individual points
     evaluated_errors = []
-    
-    for type in phi_types:
-        for deg in phi_degrees:
-            if type==0:
-                phi_type_name = 'polynomial_phi'
-                phi_type=jacobian_basis.polynomial_phi
-            if type==1:
-                phi_type_name = 'trigonometric_phi'
-                phi_type=jacobian_basis.trigonometric_phi
-            if type==2:
-                phi_type_name = 'linearize_parameters'
-                phi_type = jacobian_basis.linearize_parameters
-        
-            jacobian_basis.set_phi(phi_deg=deg, phi_type=phi_type)
-            coeff_mat = jacobian_basis.get_coefficient_matrix(sample_joints, sample_jacobians)
 
-            output_name = f"{robot}-{camera_setup}-{phi_type_name}-{deg}-{num_trajs_sample}-{num_pnts_per_traj_sample}-{num_trajs_eval}-{num_pnts_per_traj_eval}-{random_seed}.png"
-            avg_error = jacobian_basis.evaluate_goodness_of_fit(coeff_mat,num_trajs_eval,num_pnts_per_traj_eval,rng,output_folder=output_folder, output_name=output_name)
+    sample_joints, sample_jacobians = jacobian_basis.collect_data(num_trajectories=num_trajs_sample,num_pnts_per_traj=num_pnts_per_traj_sample,rng=rng)
+    test_joint_configs, test_jacobians = jacobian_basis.collect_data(num_trajectories=num_trajs_eval, num_pnts_per_traj=num_pnts_per_traj_eval, rng=np.random.default_rng(seed=random_seed+1))
+       
+    np.save(output_folder+'/sample_joints', sample_joints, allow_pickle=True)
+    np.save(output_folder+'/sample_jacobians', sample_jacobians, allow_pickle=True)
+    np.save(output_folder+'/eval_joints', test_joint_configs, allow_pickle=True)
+    np.save(output_folder+'/eval_jacobians', test_jacobians, allow_pickle=True)
+
+    path  = os.path.join(output_folder, output_folder)
+    with open(path, 'w') as f:
+        
+        for type in phi_types:
+            for deg in phi_degrees:
+                if type==0:
+                    phi_type_name = 'polynomial_phi'
+                    phi_type=jacobian_basis.polynomial_phi
+                    
+                    basis = symbolic_polynomial_phi(uvs.dof, deg)
+
+
+                if type==1:
+                    phi_type_name = 'trigonometric_phi'
+                    phi_type=jacobian_basis.trigonometric_phi
+
+                    basis = symbolic_trigonometric_phi(uvs.dof, deg)
+
+                if type==2:
+                    phi_type_name = 'kinematic_structure_phi'
+                    phi_type = jacobian_basis.kinematic_structure_phi
+
+                logger.info("Symbolic basis:")
+                for i, b in enumerate(basis):
+                    logger.info(f"phi[{i}] = {b}")
+
+
+                jacobian_basis.set_phi(phi_deg=deg, phi_type=phi_type)
+                coeff_mat = jacobian_basis.get_coefficient_matrix(sample_joints, sample_jacobians)
+
+                output_name = f"{robot}-{camera_setup_str}-{phi_type_name}-{deg}-{num_trajs_sample}-{num_pnts_per_traj_sample}-{num_trajs_eval}-{num_pnts_per_traj_eval}-{random_seed}.png"
+                avg_error = jacobian_basis.evaluate_goodness_of_fit(coeff_mat,test_joint_configs,test_jacobians,output_folder=output_folder, output_name=output_name)
+                evaluated_errors.append(avg_error)
+
+                J_model = (basis @ coeff_mat).reshape(jacobian_basis.n, jacobian_basis.m).tolist()
+
+                f.write(str(avg_error) +' '+output_name+' '+ str(J_model) + str(basis )+'\n')
+
+    
+
 
 main()
