@@ -30,6 +30,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__) # Get a logger for the current module
 # logger. debug, info, warning, error, critical
 
+sin=np.sin
+cos=np.cos
 
 P = DHSympyParams()
 
@@ -64,6 +66,13 @@ class JacobianBasis:
         '''
         pass
 
+    def custom_phi(self,q:np.array):
+        '''
+        custom phi: specify the basis for each entry of the jacobian.
+
+        the issue could be tha
+        '''
+        #TODO
 
 
     def polynomial_phi(self, q : np.array):
@@ -242,6 +251,12 @@ class JacobianBasis:
         colors=[]
         for q, J_true in zip(joint_configs, jacobians):
                 J_approximated = self.phi([np.array(q)]) @ coefficient_matrix # (1,K) @ (K, (m*n))
+                # the commented out lines below are from jan 9 2026, testing the reduced jacobian.
+                # q0=q[0]
+                # q1=q[1]
+
+                # J_approximated = np.array([ 0.49916708323414*sin(q0)*cos(q1) + 0.499167083234143*sin(q0) + 0.499167083234144*sin(q1)*cos(q0), 0.499167083234141*sin(q0)*cos(q1) + 0.499167083234139*sin(q1)*cos(q0), 0.499167083234142*sin(q0)*sin(q1) - 0.499167083234145*cos(q0)*cos(q1) - 0.499167083234133*cos(q0), 0.499167083234141*sin(q0)*sin(q1) - 0.499167083234143*cos(q0)*cos(q1) ])
+
                 J_approximated =J_approximated.reshape(self.n, self.m)
                 L2_error = np.linalg.norm(J_approximated-J_true, ord=2)
                 total_error += L2_error
