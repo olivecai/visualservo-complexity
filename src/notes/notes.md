@@ -160,3 +160,20 @@ Focusing on dof2-0-trigonometric_phi-2-50-1-1000-1-888.png: try to REDUCE THE BA
 
 
 When we use this as the Jacobian, we have Jacobian error over the evaluation space as 9.06891684454663e-15. Now let's try with a custom basis:
+
+
+## Jan 13 2026
+
+### have each entry of Jacobian be independently regressed over 
+
+OUTPUT: 2026-01-13 00:02:58,271 - INFO - Expression: sin(q0) + cos(q1)
+2026-01-13 00:02:58,275 - INFO - Computing basis for Jacobian entry 0_0:
+2026-01-13 00:02:58,276 - INFO - Computed weights: [1.99994519e+00 1.33380657e-03]
+Trained weights: [1.99994519e+00 1.33380657e-03]
+Reduced basis symbolic elements: [sin(q0)]
+Reduced basis weights: [1.99994519]
+2026-01-13 00:02:58,277 - INFO - Computing basis for Jacobian entry 0_0:
+2026-01-13 00:02:58,277 - INFO - Computed weights: [2.00001739]
+Retrained weights after reduction: [2.00001739]
+
+CODE: git commit on Jan 13 at 00:05 ish, "working independent basis object with attrition"

@@ -189,7 +189,7 @@ class JacobianBasis:
         Then x is shape (K, m*n):
         Coeff matrix is shape (K, m*n).
 
-        Then if we want to solve for any arbitrary new joint q:
+        Then if we want to solve the Jacobian for any arbitrary new joint q:
         q is shape (1, n)
         phi is shape (1,K)
         J_new = phi @ coeff matrix, so J_new shape (1,m*n). Then we may reshape the Jacobian to become (n,m).
