@@ -54,6 +54,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import sympy as sp
 import logging
+from itertools import combinations
 
 import os
 from datetime import datetime
@@ -75,6 +76,7 @@ def construct_trig_basis(params, degree):
     For example, for degree=2 and params=[t0, t1], the basis will include:
     [sin(t0), cos(t0), sin(t1), cos(t1), sin(t0)*sin(t1), sin(t0)*cos(t1), cos(t0)*sin(t1), cos(t0)*cos(t1)]
     '''
+    print(params)
     basis_elements = []
 
     num_params = len(params)
@@ -87,7 +89,7 @@ def construct_trig_basis(params, degree):
 
     # Product terms
     for d in range(2, degree + 1):
-        for indices in sp.utilities.iterables.multiset_partitions(range(num_params), d):
+        for indices in combinations(range(num_params), d):  # Changed from multiset_partitions
             term_sin = 1
             term_cos = 1
             for index in indices:
@@ -99,6 +101,7 @@ def construct_trig_basis(params, degree):
     # Remove duplicates and create a sympy expression
     unique_basis_elements = list(set(basis_elements))
     symbolic_basis_expression = sum(unique_basis_elements)
+    logger.info(f"Constructed trigonometric basis with {len(unique_basis_elements)} elements: {symbolic_basis_expression}")
 
     return symbolic_basis_expression
 
@@ -129,6 +132,15 @@ def construct_poly_basis(params, degree):
 class JacobianBasis:
     '''
     Uses a Basis object to find each entry of the Jacobian.
+
+    USAGE:
+    1. Initialize: jacobian_basis = JacobianBasis(uvs)
+    2. Set the phi type and degree: jacobian_basis.set_phi(phi_deg, phi_type)
+    3. Collect data: train_joints, train_jacobians = jacobian_basis.collect_data(num_trajectories, num_pnts_per_traj)
+    4. Train the basis: jacobian_basis.train(train_jacobians, train_joints)
+    5. Optionally reduce the basis: jacobian_basis.reduce_basis()
+    6. Evaluate the basis: errors, overall_rmse = jacobian_basis.evaluate(eval_jacobians, eval_joints)
+    7. Use the basis to predict Jacobians for new joint configurations.
     '''
     def __init__(self, uvs: UVS):
     
@@ -168,7 +180,7 @@ class JacobianBasis:
             phi_func = construct_trig_basis
             
         for entry in self.jacobian_entry_basis_objects:
-            entry.setup(params=self.params, activation_threshold=1e-2, symbolic_basis_expression=phi_func(self.params, degree=self.phi_degree))
+            entry.setup(params=self.params, activation_threshold=3e-1, symbolic_basis_expression=phi_func(self.params, degree=self.phi_degree))
 
 
     def generate_joint_samples_via_trajectory(self, num_trajectories, num_pnts_per_traj, rng=None):
@@ -225,11 +237,49 @@ class JacobianBasis:
         for i in range(self.n):
             for j in range(self.m):
                 jac_entry_i_j : Basis = self.jacobian_entry_basis_objects[i*self.m+j]
-                symbolic_basis_elements, weights = jac_entry_i_j.compute_basis(train_jacobian_matrix[:,i*self.m+j])
+                symbolic_basis_elements, weights = jac_entry_i_j.train(train_jacobian_matrix[:,i*self.m+j], train_joints)
 
 
     def reduce_basis(self):
-        pass
+        '''does not recalculate the parameters, only reduces the basis'''
+        for i in range(self.n):
+            for j in range(self.m):
+                jac_entry_i_j : Basis = self.jacobian_entry_basis_objects[i*self.m+j]
+                jac_entry_i_j.reduce_basis()
+
+    def evaluate(self, eval_jacobians, eval_joints):
+        eval_jacobians_vectors = [J.flatten() for J in eval_jacobians]
+        eval_jacobian_matrix = np.array(eval_jacobians_vectors)
+        all_errors = {} # dict of errors for each entry, key is "i_j", value is LIST of errors
+        for i in range(self.n):
+            for j in range(self.m):
+                jac_entry_i_j : Basis = self.jacobian_entry_basis_objects[i*self.m+j]
+                errors = jac_entry_i_j.evaluate(eval_jacobian_matrix[:,i*self.m+j], eval_joints)
+                all_errors[f"{i}_{j}"] = errors
+        # get overall RMSE (root mean squared error) across all entries
+        total_squared_error = 0.0
+        total_count = 0
+        for errors in all_errors.values():
+            total_squared_error += np.sum(errors**2)
+            total_count += len(errors)
+        overall_rmse = np.sqrt(total_squared_error / total_count)
+        logger.info(f"Overall RMSE across all Jacobian entries: {overall_rmse}")
+        return all_errors, overall_rmse
+    
+    def symbolic_basis(self):
+        '''
+        Return the symbolic basis for each Jacobian entry as a MATRIX.
+        '''
+        basis_matrix = []
+        for i in range(self.n):
+            row = []
+            for j in range(self.m):
+                jac_entry_i_j : Basis = self.jacobian_entry_basis_objects[i*self.m+j]
+                row.append(jac_entry_i_j.symbolic_basis)
+            basis_matrix.append(row)
+        return basis_matrix
+
+        
 
 
 class Basis:
@@ -343,6 +393,7 @@ class Basis:
         weights, residuals, rank, s = np.linalg.lstsq( np.vstack([self.eval_phi(q) for q in train_joints]), train_jacobian_entry, rcond=None)
         self.weights = weights.flatten()
         logger.info(f"Computed weights: {self.weights}")
+        return self.symbolic_basis, self.weights
 
     def get_prediction(self, joints):
         '''
@@ -367,7 +418,7 @@ class Basis:
         return errors
 
 
-def verify_test():
+def verify_basis_object():
     '''
     Just used for quick verification of Basis class functionality.
     '''
@@ -375,7 +426,7 @@ def verify_test():
     q0, q1 = sp.symbols('q0 q1')
 
     expr = sp.sin(q0) + sp.cos(q1)
-    logging.info(f"Expression: {expr}")
+    logger.info(f"Expression: {expr}")
     b = Basis("0_0")
     b.setup(activation_threshold=1e-2, params=[q0, q1], symbolic_basis_expression=expr)
 
@@ -401,8 +452,49 @@ def verify_test():
     b.train(train_jacobian_entry, train_joints)
     print(f"Retrained weights after reduction: {b.weights}")
 
+    # now evaluate:
+    eval_joints = rng.uniform(low=-np.pi, high=np.pi, size=(20, 2))
+    eval_jacobian_entry = []
+    for q in eval_joints:
+        true_value = 2.0 * np.sin(q[0]) + 0.0005 * np.cos(q[1]) 
+        noise = rng.normal(loc=0.0, scale=0.01)
+        eval_jacobian_entry.append(true_value + noise)
+    eval_jacobian_entry = np.array(eval_jacobian_entry)
+    errors = b.evaluate(eval_jacobian_entry, eval_joints)
+    print(f"Evaluation errors: {errors}")
+
+def verify_jacobian_basis():
+    robot = 'dof2'
+    camera_setup=[0,1]
+    uvs= UVS(robot, camera_setup)
+    jacobian_basis = JacobianBasis(uvs)
+    rng = np.random.default_rng(888)
+    jacobian_basis.set_phi(phi_deg=2, phi_type=1) #trig basis of degree 2
+
+    train_joints, train_jacobians = jacobian_basis.collect_data(num_trajectories=30, num_pnts_per_traj=1, rng=rng)
+    eval_joints, eval_jacobians = jacobian_basis.collect_data(num_trajectories=10, num_pnts_per_traj=1, rng=rng)
+    
+    jacobian_basis.train(train_jacobians, train_joints)
+    errors, overall_rmse = jacobian_basis.evaluate(eval_jacobians, eval_joints)
+    print(f"Basis: {jacobian_basis.symbolic_basis}")
+
+    print(f"Overall RMSE: {overall_rmse}")
+    print("Reducing basis...")
+    jacobian_basis.reduce_basis()
+
+    jacobian_basis.train(train_jacobians, train_joints)
+    jacobian_basis.evaluate(eval_jacobians, eval_joints)
+    print(f"Basis: {jacobian_basis.symbolic_basis}")
+    print(f"Overall RMSE: {overall_rmse}")
+
+
+
+
+
+
 if __name__ == "__main__":
-    verify_test()
+    # verify_basis_object()
+    verify_jacobian_basis()
 
 
 
