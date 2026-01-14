@@ -70,7 +70,6 @@ class JacobianBasis:
         '''
         custom phi: specify the basis for each entry of the jacobian.
 
-        the issue could be tha
         '''
         #TODO
 

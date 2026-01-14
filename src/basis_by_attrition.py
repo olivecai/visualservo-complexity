@@ -50,6 +50,7 @@ from sklearn.preprocessing import PolynomialFeatures
 from robot_toolbox.create_uvs import UVS, analytic_cameras
 from robot_toolbox.dh_robot import DHSympyParams
 import matplotlib.pyplot as plt
+from sklearn.linear_model import LassoCV
 
 import numpy as np
 import sympy as sp
@@ -59,6 +60,8 @@ from itertools import combinations
 import os
 from datetime import datetime
 import sys
+
+from basis import Basis
 
 # Configure basic logging to the console (default level is WARNING)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -145,6 +148,8 @@ class JacobianBasis:
     def __init__(self, uvs: UVS):
     
         self.uvs = uvs
+
+        self.activation_threshold = 1e-5 #can be set by user. For dynamic percentiles (like get the 10% lowest values) set as NEGATIVE. (negative acts as a flag)
     
         self.m : int = self.uvs.dof #dof
         self.phi_degree = None
@@ -161,7 +166,20 @@ class JacobianBasis:
             for j in range(self.m):
                 new_entry= Basis(name = f"{i}_{j}")
                 self.jacobian_entry_basis_objects.append(new_entry)
+
+        self.set_activation_threshold(self.activation_threshold)
+
+
         
+    def set_activation_threshold(self, threshold):
+        '''
+        Set the threshold for basis element reduction.
+        threshold: float, basis elements with absolute weight below this value will be discarded.
+        '''
+        self.activation_threshold = threshold
+        for element in self.jacobian_entry_basis_objects:
+            element.activation_threshold = threshold
+
     def set_phi(self,phi_deg,phi_type):
         '''
         initialize the basis functions for each Jacobian entry
@@ -279,144 +297,6 @@ class JacobianBasis:
             basis_matrix.append(row)
         return basis_matrix
 
-        
-
-
-class Basis:
-    '''
-    This Basis object is used for storing, calculating, modifying, etc the regression basis and its weights.
-    Any regression basis can be created by doing the following:
-    1. Initialize: basis_obj = Basis("a")
-    2. Set the parameters of the basis, ie `basis_obj.set_params([t0,t1,t2])`
-    3. Set the phi expression to be the basis, ie `basis_obj.set_basis(expr)` where expr is a sympy expression
-    4. Compute the weights given training data, ie `basis_obj.compute_basis(train_jacobian_entry, train_joints)`
-    5. Optionally reduce the basis by removing trivial components, ie `basis_obj.reduce_basis()`
-    6. Evaluate the basis on evaluation data, ie `basis_obj.evaluate(eval_jacobian_entry, eval_joints)`
-    7. Get predictions on new data, ie `basis_obj.get_prediction(joints)`
-
-    '''
-    def __init__(self, name):
-        self.name = name
-        self.basis=None #function
-        self.weights=None
-        self.number_of_basis_elements = None
-        self.activation_threshold = None
-        self.discarded_basis_elements=[]
-        self.symbolic_basis = None # vector shape 1,number_of_basis_elements
-        self.params = None # the sympy parameters for the joints: t0, ..., t(dof-1)
-
-    def setup(self, params, activation_threshold, symbolic_basis_expression):
-        self.set_params(params)
-        self.activation_threshold = activation_threshold
-        self.set_basis(symbolic_basis_expression)
-
-    def set_params(self, params):
-        self.params=params
-
-    def set_basis(self, symbolic_basis_expression):
-        '''
-        symbolic_basis_expression = scalar form expression like cos(t1)+sin(t0)+cos(t0)*sin(t1)
-        self.symbolic_basis = vector form of basis
-        self.basis = callable function (give joints get basis evaluation)
-        '''
-
-        self.symbolic_basis = list(symbolic_basis_expression.as_ordered_terms())
-        self.number_of_basis_elements = len(self.symbolic_basis)
-
-        self.basis = sp.lambdify(
-            self.params,
-            sp.Matrix(self.symbolic_basis),
-            modules="numpy"
-        )
-
-    def eval_phi(self, joints:np.array): # return shape (number_of_basis_elements, )
-        return np.asarray(self.basis(*joints), dtype=float).reshape(-1) #matrix of elements
-
-    def reduce_basis(self):
-        """
-        Remove basis elements whose absolute weight is below activation_threshold.
-        Mutates:
-        - self.symbolic_basis
-        - self.weights
-        - self.discarded_basis_elements
-        - self.number_of_basis_elements
-        - self.basis (callable)
-        """
-
-        assert self.weights is not None, "Cannot reduce basis before training"
-        assert self.symbolic_basis is not None, "Symbolic basis not set"
-
-        kept_basis = []
-        kept_weights = []
-
-        for phi_k, w_k in zip(self.symbolic_basis, self.weights):
-            if abs(w_k) >= self.activation_threshold:#if the weight is >= threshold, then keep it
-                kept_basis.append(phi_k)
-                kept_weights.append(w_k)
-            else:
-                self.discarded_basis_elements.append(phi_k)
-
-        if len(kept_basis) == 0:
-            raise RuntimeError(
-                f"All basis elements discarded for Jacobian entry {self.name}"
-            )
-
-        # Update internal state
-        self.symbolic_basis = kept_basis
-        self.weights = np.array(kept_weights)
-        self.number_of_basis_elements = len(kept_basis)
-
-        # Rebuild callable basis function
-        # basis(q) -> [phi_1(q), ..., phi_K(q)]
-        self.basis = sp.lambdify(
-            self.params,
-            sp.Matrix(self.symbolic_basis),
-            modules="numpy"
-        )
-
-        # at this point, the basis has been reduced and we can either. USE the current reduced basis OR recompute the weights given the new reduced basis. The nice thing is we can keep reusing the same data we collected.
-
-    def train(self, train_jacobian_entry, train_joints):
-        '''
-        REGRESSION AND RET WEIGHTS
-
-        return the symbolic basis elements and the corresponding weights.
-
-        train_jacobian_entry is a N x 1 col vec,
-        basis is a 1 x number_of_basis_elements vec,
-        and the basis itself should be [number_of_basis_elements x 1]
-        '''
-        
-
-        logger.info(f"Computing basis for Jacobian entry {self.name}:")
-        # print(np.array(self.eval_phi(t) for t in train_joints))
-        weights, residuals, rank, s = np.linalg.lstsq( np.vstack([self.eval_phi(q) for q in train_joints]), train_jacobian_entry, rcond=None)
-        self.weights = weights.flatten()
-        logger.info(f"Computed weights: {self.weights}")
-        return self.symbolic_basis, self.weights
-
-    def get_prediction(self, joints):
-        '''
-        EVALUATE BASIS GIVEN JOINTS AND WEIGHTS
-        '''
-        return self.eval_phi(joints) @ self.weights
-    
-    def evaluate(self, eval_jacobian_entry, eval_joints):
-        '''
-        Evaluate the basis on the evaluation data and return the error list.
-
-        eval_jacobian_entry   
-        '''
-        predictions = np.array([self.get_prediction(q) for q in eval_joints]).flatten()
-        eval_jacobian_entry = np.array(eval_jacobian_entry).flatten()
-        logging.info(f"Evaluating basis for {self.name}:")
-        logging.info(f"Predictions: {predictions}")
-        logging.info(f"Ground Truth: {eval_jacobian_entry}")
-    
-        errors = eval_jacobian_entry - predictions
-        logging.info(f"Errors: {errors}")
-        return errors
-
 
 def verify_basis_object():
     '''
@@ -428,7 +308,7 @@ def verify_basis_object():
     expr = sp.sin(q0) + sp.cos(q1)
     logger.info(f"Expression: {expr}")
     b = Basis("0_0")
-    b.setup(activation_threshold=1e-2, params=[q0, q1], symbolic_basis_expression=expr)
+    b.setup(activation_threshold=5e-1, params=[q0, q1], symbolic_basis_expression=expr)
 
     b.weights = np.array([2.0, 0.0005])
 
@@ -444,8 +324,10 @@ def verify_basis_object():
         noise = rng.normal(loc=0.0, scale=0.01)
         train_jacobian_entry.append(true_value + noise)
     train_jacobian_entry = np.array(train_jacobian_entry)
+    b.lasso_regression(train_jacobian_entry, train_joints)
+    print(f"Trained LASSO weights: {b.weights}")
     b.train(train_jacobian_entry, train_joints)
-    print(f"Trained weights: {b.weights}")
+    print(f"Trained LS weights: {b.weights}")
     b.reduce_basis()
     print(f"Reduced basis symbolic elements: {b.symbolic_basis}")
     print(f"Reduced basis weights: {b.weights}")
@@ -487,14 +369,159 @@ def verify_jacobian_basis():
     print(f"Basis: {jacobian_basis.symbolic_basis}")
     print(f"Overall RMSE: {overall_rmse}")
 
+    
 
 
 
+def main():
+    '''
+    Usage:
+    python3 basis_by_attrition.py dof2 0,1 10 3 100 10 1,2,3 0,1 888 results
+    '''
+
+    params = sys.argv
+    for i in range(len(params)):
+        try:
+            params[i] = int(params[i])
+        except:
+            pass
+
+    (
+        _,
+        robot,
+        camera_setup_str,
+        num_trajs_sample,
+        num_pnts_per_traj_sample,
+        num_trajs_eval,
+        num_pnts_per_traj_eval,
+        phi_degrees_str,
+        phi_types_str,
+        activation_threshold,
+        random_seed,
+        output_folder,
+    ) = params
+
+    camera_setup = [int(i) for i in str(camera_setup_str).split(',')]
+    phi_degrees = [int(i) for i in str(phi_degrees_str).split(',')]
+    phi_types = [int(i) for i in str(phi_types_str).split(',')]
+    rng = np.random.default_rng(random_seed)
+
+    logger.info(
+        f"\nrobot={robot}"
+        f"\ncameras={camera_setup}"
+        f"\nsample_trajs={num_trajs_sample}"
+        f"\nsample_pts={num_pnts_per_traj_sample}"
+        f"\neval_trajs={num_trajs_eval}"
+        f"\neval_pts={num_pnts_per_traj_eval}"
+        f"\nphi_degrees={phi_degrees}"
+        f"\nphi_types={phi_types}"
+        f"\nactivation_threshold={activation_threshold}"
+        f"\nseed={random_seed}"
+        f"\nout={output_folder}"
+    )
+
+    os.makedirs(output_folder, exist_ok=True)
+
+    uvs = UVS(robot, camera_setup)
+    jacobian_basis = JacobianBasis(uvs)
+
+    # -------------------------
+    # Data collection (ONCE)
+    # -------------------------
+    train_joints, train_jacobians = jacobian_basis.collect_data(
+        num_trajectories=num_trajs_sample,
+        num_pnts_per_traj=num_pnts_per_traj_sample,
+        rng=rng
+    )
+
+    eval_joints, eval_jacobians = jacobian_basis.collect_data(
+        num_trajectories=num_trajs_eval,
+        num_pnts_per_traj=num_pnts_per_traj_eval,
+        rng=np.random.default_rng(random_seed + 1)
+    )
+
+    np.save(f"{output_folder}/train_joints.npy", train_joints, allow_pickle=True)
+    np.save(f"{output_folder}/train_jacobians.npy", train_jacobians, allow_pickle=True)
+    np.save(f"{output_folder}/eval_joints.npy", eval_joints, allow_pickle=True)
+    np.save(f"{output_folder}/eval_jacobians.npy", eval_jacobians, allow_pickle=True)
+
+
+  
+
+    for phi_type in phi_types:
+        for deg in phi_degrees:
+            output_name = f"{robot}-{camera_setup_str}-{phi_type}-{deg}-{num_trajs_sample}-{num_pnts_per_traj_sample}-{num_trajs_eval}-{num_pnts_per_traj_eval}-{activation_threshold}-{random_seed}.txt"
+            results_path = os.path.join(output_folder, output_name)
+            with open(results_path, "w") as f:
+
+                phi_name = "poly" if phi_type == 0 else "trig"
+                logger.info(f"\n=== Running {phi_name} basis, degree={deg} ===")
+
+                # -------------------------
+                # Setup basis
+                # -------------------------
+                jacobian_basis.set_activation_threshold(activation_threshold)
+                jacobian_basis.set_phi(phi_deg=deg, phi_type=phi_type)
+                f.write(f"Robot: {robot}, Cameras: {camera_setup}\n")
+                f.write(f"=== {phi_name} basis, degree={deg} ===\n")
+                f.write(f"Initial basis elements per Jacobian entry: {jacobian_basis.jacobian_entry_basis_objects[0].symbolic_basis}\n")
+
+                # -------------------------
+                # Train
+                # -------------------------
+                f.write("TRAINING WITH FULL BASIS:")
+                jacobian_basis.train(train_jacobians, train_joints)
+                for entry in jacobian_basis.jacobian_entry_basis_objects:
+                    f.write(
+                        f"  J[{entry.name}]: "
+                        f"number of basis elements={entry.number_of_basis_elements}, "
+                        f"{entry.symbolic_basis} "
+                        f"weights={entry.weights.tolist()}\n"
+
+                    )
+
+                # -------------------------
+                # Evaluate (before reduction)
+                # -------------------------
+                _, rmse_before = jacobian_basis.evaluate(eval_jacobians, eval_joints)
+
+                # -------------------------
+                # Reduce + retrain
+                # -------------------------
+                f.write("TRAINING WITH REDUCED BASIS:")
+                jacobian_basis.reduce_basis()
+                jacobian_basis.train(train_jacobians, train_joints)
+
+                _, rmse_after = jacobian_basis.evaluate(eval_jacobians, eval_joints)
+
+                # -------------------------
+                # Log symbolic structure
+                # -------------------------
+
+                f.write(
+                    f"{phi_name}, deg={deg}, "
+                    f"rmse_before={rmse_before:.4e}, "
+                    f"rmse_after={rmse_after:.4e}\n"
+                )
+
+                for entry in jacobian_basis.jacobian_entry_basis_objects:
+                    f.write(
+                        f"  J[{entry.name}]: "
+                        f"number of basis elements={entry.number_of_basis_elements}, "
+                        f"{entry.symbolic_basis} "
+                        f"weights={entry.weights.tolist()}\n"
+
+                    )
+
+                f.write("\n")
+
+    logger.info("Done.")
 
 
 if __name__ == "__main__":
     # verify_basis_object()
-    verify_jacobian_basis()
+    # verify_jacobian_basis()
+    main()
 
 
 

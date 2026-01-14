@@ -177,3 +177,13 @@ Reduced basis weights: [1.99994519]
 Retrained weights after reduction: [2.00001739]
 
 CODE: git commit on Jan 13 at 00:05 ish, "working independent basis object with attrition"
+
+idea:
+use regression to predict cartesian space 
+then, can we pass through a nonlinear camera transform to send it to the projected space?
+
+ie online real time learning a global model via regression
+
+paper idea:
+- jacobian --> approximated by a trigonometrix basis + residual terms
+- compare how the residual terms increase/decrease with relation to performance for the visual servoing robot
