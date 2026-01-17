@@ -131,3 +131,8 @@ class UVS:
             projections.append(cam_projections)
         return projections
 
+
+if __name__ == "__main__":
+    uvs = UVS('dof3', [0])
+    print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+    print(uvs.dh_robot.F)

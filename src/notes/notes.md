@@ -187,3 +187,68 @@ ie online real time learning a global model via regression
 paper idea:
 - jacobian --> approximated by a trigonometrix basis + residual terms
 - compare how the residual terms increase/decrease with relation to performance for the visual servoing robot
+
+## Jan 15 2026
+
+### Amir Presentation
+
+data must be rich enough to excite
+
+learning based methods dont usually use the dynamics equations -- try to estimate mapping from states to torques.
+
+we can categorize into parametric and nonparametric: 
+low gaussion process regression --> computationally efficient and with high accuracy
+
+gaussian process with rigid body D kernels 
+
+residial and incremental learning and deep lagrangian network (delan) where they integrate lagrangian pricnip;le into dep learning
+
+main objective: sensorless four channel teleoperation system
+
+linearized dynamics matrix
+
+regressor matrix
+
+general transparency analysis framework: hybrid matrix of force between human force and impedence of real world environemtn --> transmitted impedence
+
+what is improtant for trasaprency: force feedback and dynamic compensation
+
+just dynamic compensation, no ofrce feedback: maximum trasnmittable impendence is not ideal thus can only help with free motion, not hard contact
+
+then the effect of force feedback: the maximum transmittable impendence: when C goes to 1, the value goes to infinity, which is ideal (contact with hard surface)
+
+experiments and results:
+
+estimation needs 26 base parameters for leader and follower, seperately.
+actual vs modeled tarque:
+
+experimental modellling and gain tuning for passivity
+
+some params removed from dnamic model
+
+scale force feedabck to 50%
+
+### My Ideas
+
+instead of training on the jacobian (more parameters) what about estimating the forward kinematics and differentiating? (less params)
+
+estimate forward kinematics, and differentiate, and then try to estimate the camera projection?
+
+
+three movements:
+
+firstly, compare the basis regression and creating sparse model of the robot in cartesian space --> given a large enough basis, we should be able to recover precisely the exact kinematics.
+this will likely be harder than we expect for higher dof, since covariance increases when parameters increase. now, how to avoid the messy combinatorials? show that the sindy for larger parameter problems?
+
+the paper also discusses the difficulty in finding the correct basis. this will be our focus. 
+
+do the sparse regression AND the pareto analysis:
+
+https://royalsocietypublishing.org/rspa/article/473/2204/20170009/57451/Model-selection-for-dynamical-systems-via-sparse
+
+"Unfortunately, interpreting the Pareto analysis is often ambiguous. The Pareto front may not have a sharp elbow but may instead have a cluster of models near the elbow."
+
+
+the SINDy paper shows that we can do sparse regression PLUS a gaussian residual noise term.
+
+domain knowledge is trig terms
