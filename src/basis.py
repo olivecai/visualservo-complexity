@@ -230,12 +230,14 @@ class Basis:
         return self.symbolic_basis, self.weights
     
     def compute_aic(self, RSS, N, k):
+        '''N: number of data points
+        k: number of parameters (non-zero weights)'''
         return N * np.log(RSS / N) + 2 * k
 
     def compute_aicc(self, RSS, N, k):
         aic = self.compute_aic(RSS, N, k)
         if N > k + 1:
-            return aic + 2 * k * (k + 1) / (N - k - 1)
+            return aic + (2 * k * (k + 1)) / (N - k - 1)
         else:
             return np.inf
         
@@ -243,25 +245,34 @@ class Basis:
         weights_list = []
         RSS_list=[]
         num_basis_elements_list=[]
+        aicc_list = []
 
         for lambda_val in lambda_values:
             _, weights = self.sindy_stlsq(train_b=train_b, train_a=train_a,  lambda_val=lambda_val)
-            weights_list.append(weights)
             RSS= self.evaluate(eval_b=eval_b, eval_a=eval_a)
-            RSS_list.append(RSS)
             num_basis_elements = sum(1 for x in weights if x) #count the number of activated components
+            if num_basis_elements == 0:
+                aicc_list.append(np.inf)
+            else:
+                aicc_list.append(self.compute_aicc(RSS, N=len(eval_b), k=num_basis_elements))
+            weights_list.append(weights)
+            RSS_list.append(RSS)
             num_basis_elements_list.append(num_basis_elements)
-        
-        plt.plot(num_basis_elements_list,RSS_list)
 
+        
+        plt.scatter(num_basis_elements_list,RSS_list)
+        plt.xlabel("Number of Basis Elements")
+        plt.ylabel("Residual Sum of Squares (RSS)")
+        plt.title("Pareto Frontier: Number of Basis Elements vs RSS")
+        for i in range(len(lambda_values)):
+            logger.info(f"lambda value: {lambda_values[i]:.2f}, num_basis_elements: {num_basis_elements_list[i]}, RSS: {RSS_list[i]}, AICC: {aicc_list[i]:.2f}")
+        
         plt.show()
+
+        #return the lambda val associated with the minimum aicc:
+        # lambda, weights, RSS, num_basis_elements, min_aicc
+        return lambda_values[np.argmin(aicc_list)], weights_list[np.argmin(aicc_list)], RSS_list[np.argmin(aicc_list)], num_basis_elements_list[np.argmin(aicc_list)], min(aicc_list)   
         
-            
-
-
-
-
-
 if __name__ == "__main__":
     # Example usage
     t0, t1 = sp.symbols('t0 t1')
@@ -270,34 +281,38 @@ if __name__ == "__main__":
     basis_obj = Basis("example_basis")
     basis_obj.setup(params=[t0, t1], activation_threshold=0.1, symbolic_basis_expression=basis_expr)
     
-    # Dummy training data
-    train_a = [np.array([0.0, 0.0]), np.array([np.pi/2, np.pi/2]), np.array([np.pi, np.pi])]
-    train_b = np.array([1.0, 0.5, -1.0])
+    # # Dummy training data
+    # train_a = [np.array([0.0, 0.0]), np.array([np.pi/2, np.pi/2]), np.array([np.pi, np.pi])]
+    # train_b = np.array([1.0, 0.5, -1.0])
+
+    # call .basis(t0,t1) to generate training data...
+    train_a = np.random.uniform(0, 2*np.pi, (30, 2))
+    train_b = np.array([basis_obj.basis(*q).sum() for q in train_a])
+    
+    # Dummy evaluation data
+    eval_a = np.random.uniform(0, 2*np.pi, (30, 2))
+    eval_b = np.array([basis_obj.basis(*q).sum() for q in eval_a])
+    # eval_a = [np.array([np.pi/4, np.pi/4]), np.array([3*np.pi/4, 3*np.pi/4])]
+    # eval_b = np.array([0.7, -0.7])
+    
+    basis_expr = sp.cos(t0) + sp.sin(t1) + sp.cos(t0)*sp.sin(t1) + sp.cos(t0)**2 + sp.sin(t1)**2
+    basis_obj.set_basis(basis_expr)
     
     basis_obj.train(train_b, train_a)
     print(f"Symbolic Basis before reduction: {basis_obj.symbolic_basis}")
     basis_obj.reduce_basis()
     print(f"Symbolic Basis after reduction: {basis_obj.symbolic_basis}")
 
-    
-    # Dummy evaluation data
-    eval_a = [np.array([np.pi/4, np.pi/4]), np.array([3*np.pi/4, 3*np.pi/4])]
-    eval_b = np.array([0.7, -0.7])
-    
     errors = basis_obj.evaluate(eval_b, eval_a)
     print("Evaluation Errors:", errors)
 
     print("Now check SINDy")
 
     t0, t1 = sp.symbols('t0 t1')
-    basis_expr = sp.cos(t0) + sp.sin(t1) + sp.cos(t0)*sp.sin(t1)
     
     basis_obj = Basis("sindy")
     basis_obj.setup(params=[t0, t1], activation_threshold=0.1, symbolic_basis_expression=basis_expr)
     
-    # Dummy training data
-    train_a = [np.array([0.0, 0.0]), np.array([np.pi/2, np.pi/2]), np.array([np.pi, np.pi])]
-    train_b = np.array([1.0, 0.5, -1.0])
     basis_obj.sindy_stlsq(train_b, train_a, lambda_val=0.1, max_iter=10)
     print(f"Symbolic Basis: {basis_obj.symbolic_basis}")
     print(f"Weights: {basis_obj.weights}")
@@ -306,5 +321,6 @@ if __name__ == "__main__":
     print("Evaluation Errors:", errors)
 
     print("Now let's see that PARETO CURVE")
-    basis_obj.pareto_frontier(train_b=train_b, train_a=train_a, eval_b=eval_b, eval_a=eval_a, lambda_values=np.linspace(0,1,11).tolist())
+    lambda_val, weights, RSS, num_basis_elements, min_aicc = basis_obj.pareto_frontier(train_b=train_b, train_a=train_a, eval_b=eval_b, eval_a=eval_a, lambda_values=np.linspace(0,1,11).tolist())
     
+    print(f"Best lambda: {lambda_val}, Weights: {weights}, RSS: {RSS}, Num Basis Elements: {num_basis_elements}, Min AICC: {min_aicc}")
