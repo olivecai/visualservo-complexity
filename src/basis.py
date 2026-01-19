@@ -64,7 +64,7 @@ class Basis:
         self.basis = callable function (give joints get basis evaluation)
         '''
 
-        self.symbolic_basis = list(symbolic_basis_expression.as_ordered_terms())
+        self.symbolic_basis = list(symbolic_basis_expression)
         self.number_of_basis_elements = len(self.symbolic_basis)
 
         self.basis = sp.lambdify(
@@ -172,7 +172,7 @@ class Basis:
         eval_b   
         '''
         predictions = np.array([self.get_prediction(q) for q in eval_a]).flatten()
-        eval_b = np.array(eval_b).flatten()
+        eval_b = np.array(eval_b)
         logging.info(f"Evaluating basis for {self.name}:")
         logging.info(f"Predictions: {predictions}")
         logging.info(f"Ground Truth: {eval_b}")
@@ -193,6 +193,9 @@ class Basis:
         basis is a 1 x number_of_basis_elements vec,
         and the basis itself should be [number_of_basis_elements x 1]
         '''
+        if lambda_val is None:
+            lambda_val = self.activation_threshold
+            
         logger.info(f"Computing basis for {self.name} using SINDy STLSQ regression:")
         phi_matrix = np.vstack([self.eval_phi(q) for q in train_a])
         
@@ -241,7 +244,7 @@ class Basis:
         else:
             return np.inf
         
-    def pareto_frontier(self, train_b, train_a, eval_b, eval_a, lambda_values):
+    def pareto_frontier(self, train_b, train_a, eval_b, eval_a, lambda_values, plot_name=None):
         weights_list = []
         RSS_list=[]
         num_basis_elements_list=[]
@@ -259,15 +262,20 @@ class Basis:
             RSS_list.append(RSS)
             num_basis_elements_list.append(num_basis_elements)
 
-        
-        plt.scatter(num_basis_elements_list,RSS_list)
+        logger.info(num_basis_elements_list)
+        logger.info(RSS_list)
+        plt.scatter(np.array(num_basis_elements_list),np.array(RSS_list))
+        # plt.plot(num_basis_elements_list,RSS_list)
         plt.xlabel("Number of Basis Elements")
         plt.ylabel("Residual Sum of Squares (RSS)")
         plt.title("Pareto Frontier: Number of Basis Elements vs RSS")
         for i in range(len(lambda_values)):
             logger.info(f"lambda value: {lambda_values[i]:.2f}, num_basis_elements: {num_basis_elements_list[i]}, RSS: {RSS_list[i]}, AICC: {aicc_list[i]:.2f}")
         
-        plt.show()
+        # plt.show()
+
+        if plot_name is not None:
+            plt.savefig(plot_name)
 
         #return the lambda val associated with the minimum aicc:
         # lambda, weights, RSS, num_basis_elements, min_aicc
@@ -276,7 +284,7 @@ class Basis:
 if __name__ == "__main__":
     # Example usage
     t0, t1 = sp.symbols('t0 t1')
-    basis_expr = sp.cos(t0) + sp.sin(t1) + sp.cos(t0)*sp.sin(t1)
+    basis_expr = [sp.cos(t0), sp.sin(t1) , sp.cos(t0)*sp.sin(t1)]
     
     basis_obj = Basis("example_basis")
     basis_obj.setup(params=[t0, t1], activation_threshold=0.1, symbolic_basis_expression=basis_expr)
@@ -287,7 +295,9 @@ if __name__ == "__main__":
 
     # call .basis(t0,t1) to generate training data...
     train_a = np.random.uniform(0, 2*np.pi, (30, 2))
-    train_b = np.array([basis_obj.basis(*q).sum() for q in train_a])
+    noise = np.random.normal(0, 0.05, size=(30,))
+    train_b = np.array([basis_obj.basis(*q).sum() for q in train_a ])
+    train_b += noise
     
     # Dummy evaluation data
     eval_a = np.random.uniform(0, 2*np.pi, (30, 2))
@@ -295,7 +305,7 @@ if __name__ == "__main__":
     # eval_a = [np.array([np.pi/4, np.pi/4]), np.array([3*np.pi/4, 3*np.pi/4])]
     # eval_b = np.array([0.7, -0.7])
     
-    basis_expr = sp.cos(t0) + sp.sin(t1) + sp.cos(t0)*sp.sin(t1) + sp.cos(t0)**2 + sp.sin(t1)**2
+    basis_expr = [sp.cos(t0) , sp.sin(t1) , sp.cos(t0)*sp.sin(t1) , t0, t1, t0**2, t1**2]
     basis_obj.set_basis(basis_expr)
     
     basis_obj.train(train_b, train_a)
