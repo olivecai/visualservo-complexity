@@ -33,6 +33,62 @@ class DHSympyParams:
     def get_params(self):
         return (self.joint_vars, self.cart_space_vars, self.task_space_vars, self.camera_vars, self.link_length_vars)
     
+P = DHSympyParams()
+jntspace, cartspace, taskspace, c, l = P.get_params()
+t0, t1, t2, t3, t4, t5, t6, t7, t8, t9 = jntspace
+x, y, z = cartspace
+u, v = taskspace
+
+dof2_params = [
+                [t0, 0, 0.5, 0], 
+                [t1, 0, 0.5, 0]
+                ]
+
+dylan_dof3_params=[
+                [ t0, sp.pi/2, 0 , 0 ],
+                [ t1,  0  ,  0.55, 0 ],
+                [ t2,  0  ,  0.3, 0 ]
+                ]
+
+
+kinova_dof7_params = [
+    [t0,      sp.pi,   0.0,   0.0],
+    [t1,      sp.pi/2, 0.0, -(.1564 + 0.1284)],
+    [t2 +sp.pi, sp.pi/2, 0.0, -(0.0054 + 0.0064)],
+    [t3 +sp.pi, sp.pi/2, 0.0, -(0.2104 + 0.2104)],
+    [t4 +sp.pi, sp.pi/2, 0.0, -(0.0064 + 0.0064)],
+    [t5 +sp.pi, sp.pi/2, 0.0, -(0.2084 + 0.1059)],
+    [t6 +sp.pi, sp.pi/2, 0.0, 0.0],
+    [t7 +sp.pi,    sp.pi, 0.0, -(0.1059 + 0.0615)],
+]
+
+
+dof4_params = [
+    [t0,  sp.pi/2,  0.2,  0.0],   # Base rotates, link 1 vertical offset
+    [t1,      0.0,  0.5,  0.0],   # Link 2 extends forward
+    [t2,      0.0,  0.4,  0.0],   # Link 3 extends forward
+    [t3,      0.0,  0.2,  0.0]    # Wrist rotation, small link for gripper
+]
+
+jaco_dh_params = [
+    [ -t0,        1.5708,   0.0,    0.2755 ],   # Joint 1
+    [ t1+1.5708,  3.1416,   0.4100, 0.0    ],   # Joint 2
+    [ t2-1.5708,  1.5708,  -0.0098, 0.0    ],   # Joint 3
+    [ t3,         0.9599,   0.0,   -0.0642 ],   # Joint 4
+    [ t4+3.1416,  0.9599,   0.0,   -0.0642 ],   # Joint 5
+    [ t5-1.1868,  3.1416,   0.0,   -0.1456 ]    # Joint 6
+]
+
+
+puma_dh_params = [
+    [t0, -sp.pi/2, 0.0,     0.0     ],  # Joint 1
+    [t1,     0.0 , 0.4318,  0.0     ],  # Joint 2
+    [t2, -sp.pi/2, 0.0203,  0.15005 ],  # Joint 3
+    [t3,  sp.pi/2, 0.0,     0.4318  ],  # Joint 4
+    [t4, -sp.pi/2, 0.0,     0.0     ],  # Joint 5
+    [t5,     0.0 , 0.0,     0.0     ]   # Joint 6
+]
+
 
 class DenavitHartenbergAnalytic():
     '''

@@ -10,6 +10,7 @@ LIBRARY ==> the terms that compose the basis
 from sklearn.preprocessing import PolynomialFeatures
 from robot_toolbox.create_uvs import UVS, analytic_cameras
 from robot_toolbox.dh_robot import DHSympyParams, DenavitHartenbergAnalytic
+from robot_toolbox.kinematic_structure import get_kinematic_structure
 import matplotlib.pyplot as plt
 
 from itertools import combinations, product
@@ -34,6 +35,8 @@ cos=np.cos
 
 P = DHSympyParams()
 
+
+
 def generate_symbolic_library(q, max_order=2, include_constant=True, primitive_sympy_functions=[sp.sin, sp.cos]):
     """
     q: list of sympy symbols [q0, q1, ..., qn]
@@ -42,13 +45,12 @@ def generate_symbolic_library(q, max_order=2, include_constant=True, primitive_s
     if len(primitive_sympy_functions)>0:
         for qi in q:
             for p in primitive_sympy_functions:
-        
                 primitives.append(p(qi))
-    elif len(primitive_sympy_functions)==0:
-        # then do polynomials only
-        for order in range(1, max_order + 1):
-            for qi in q:
-                primitives.append(qi**order)
+    # elif len(primitive_sympy_functions)==0:
+    #     # then do polynomials only
+    #     for order in range(1, max_order + 1):
+    #         for qi in q:
+    #             primitives.append(qi**order)
 
     library = []
 
@@ -70,14 +72,18 @@ def generate_symbolic_library(q, max_order=2, include_constant=True, primitive_s
 
 # create a basis to approximate the robot function
 class ForwardKinematics:
-    def __init__(self, robot: DenavitHartenbergAnalytic):
+    def __init__(self, robot: DenavitHartenbergAnalytic, name=None, activation_threshold = 0.1):
 
         self.robot = robot
+
         '''
         User instructions:
 
         Initialize a ForwardKinematics object (TRUE REAL WORLD FORWARD KIN, NO CAMERA PROJECTION)
         set; collect data, get the coefficient matrix, then validate that model.
+
+        kinematic_structure = [] if not mode 2
+        if mode 2, then the robot's actual kinematic structure will be captured from the basis
         
         '''
         self.m : int = 1 #dof
@@ -86,14 +92,33 @@ class ForwardKinematics:
         self.n : int = 3 #cartesian real world
         self.params = [sp.symbols(f"q{i}") for i in range(self.dof)]
 
+
         self.basis_obj_list = []
         for i in range(self.n): #x,y,z each gets its own basis
             new_entry= Basis(name = f"{i}")
+            if name:
+                print("KINEMATIC STRUCTURE INDEXED AT i:",self.get_kinematic_structure(name)[i])
+                new_entry.setup(params=self.params, activation_threshold=activation_threshold, symbolic_basis_expression=self.get_kinematic_structure(name)[i])
             self.basis_obj_list.append(new_entry)
+        for i in range(self.n):
+            print("num basis element", self.basis_obj_list[i].number_of_basis_elements)
+            print("sym basis", self.basis_obj_list[i].symbolic_basis)
+
 
         logger.info(f"m: {self.m}, phi_degree: {self.phi_degree}, n: {self.n}")
 
-    def set_phi(self,phi_deg,phi_type, activation_threshold):
+    def get_kinematic_structure(self, name):
+        q0 = self.params[0]
+        q1 = self.params[1]
+
+        #true
+        dof2 = [[sp.sin(self.params[0])*sp.sin(self.params[1]), sp.cos(self.params[0])*sp.cos(self.params[1]), sp.cos(self.params[0])], [sp.sin(self.params[0])*sp.cos(self.params[1]), sp.sin(self.params[0]), sp.sin(self.params[1])*sp.cos(self.params[0])], []]
+        
+        dof2 = [[]]
+        if name == 'dof2':
+            return dof2
+
+    def set_phi(self,phi_deg,phi_type, activation_threshold, primitive_sympy_functions=[]):
         '''
         initialize the basis functions for each Jacobian entry
         phi_type: 0 for polynomial, 1 for trigonometric
@@ -105,10 +130,11 @@ class ForwardKinematics:
 
         self.phi_degree = phi_deg
 
-        if phi_type == 0:
-            primitive_sympy_functions = []
-        elif phi_type == 1:
-            primitive_sympy_functions = [sp.sin, sp.cos]
+        if primitive_sympy_functions==[]:
+            if phi_type == 0:
+                primitive_sympy_functions = []
+            elif phi_type == 1:
+                primitive_sympy_functions = [sp.sin, sp.cos]
     
         phi_func = generate_symbolic_library(
             q=self.params,
@@ -192,8 +218,8 @@ class ForwardKinematics:
         for i in range(self.n):
             for j in range(self.m):
                 pos_entry_i_j : Basis = self.basis_obj_list[i*self.m+j]
-                print(eval_pos)
-                print(eval_pos[:,i*self.m+j])
+                # print(eval_pos)
+                # print(eval_pos[:,i*self.m+j])
                 rss = pos_entry_i_j.evaluate(eval_pos[:,i*self.m+j], eval_joints)
                 total_rss += rss
                 total_count += len(eval_joints)
@@ -209,32 +235,40 @@ class ForwardKinematics:
                 pos_entry_i_j : Basis = self.basis_obj_list[i*self.m+j]
                 pos_entry_i_j.reduce_basis()
 
-    def sindy(self, train_pos, train_joints):
+    def sindy(self, train_pos, train_joints, lambda_vals=[]):
         train_pos=np.array(train_pos)
 
         for i in range(self.n):
             for j in range(self.m):
-                pos_entry_i_j : Basis = self.basis_obj_list[i*self.m+j]
+                pos_entry_i_j :  Basis = self.basis_obj_list[i*self.m+j]
+                if lambda_vals:
+                    pos_entry_i_j.activation_threshold = lambda_vals[i*self.m+j]
                 _, pos_entry_i_j.weights = pos_entry_i_j.sindy_stlsq(train_pos[:,i*self.m+j], train_joints, lambda_val=pos_entry_i_j.activation_threshold)
         
     def pareto_frontier(self, train_pos, train_joints, eval_pos, eval_joints, lambda_values=np.linspace(0,1, 11), output_folder=None):
         train_pos=np.array(train_pos)
         eval_pos=np.array(eval_pos)
-        if output_folder is not None:
-            os.makedirs(output_folder, exist_ok=True)
-            plotname = f"{output_folder}/pareto_frontier.png"
-        else:
-            plotname = None
+
+        best_lambdas = []
+        
         for i in range(self.n):
             for j in range(self.m):
+                if output_folder is not None:
+                    os.makedirs(output_folder, exist_ok=True)
+                    plotname = f"{output_folder}/pareto_frontier_i_j.png"
+                else:
+                    plotname = None
                 pos_entry_i_j : Basis = self.basis_obj_list[i*self.m+j]
                 lambda_val, weights, RSS, num_basis_elements, min_aicc =  pos_entry_i_j.pareto_frontier(train_b=train_pos[:,i*self.m+j], train_a=train_joints,eval_b=eval_pos[:,i*self.m+j], eval_a=eval_joints,lambda_values=lambda_values, plot_name=plotname)
                 logger.info(f"Basis Component: {pos_entry_i_j.name}, Best lambda: {lambda_val}, Weights: {weights}, RSS: {RSS}, Num Basis Elements: {num_basis_elements}, Min AICC: {min_aicc}")
+                best_lambdas.append(lambda_val)
 
+        return best_lambdas
+    
 def main():
     '''
     Usage:
-    python3 forward_kinematics.py dof2 10 3 100 10 1,2,3 0,1 888 results
+    python3 forward_kinematics.py dof2 50 1 100 1 1,2 1 0.1 888 test_jan20
     '''
 
     params = sys.argv
@@ -277,8 +311,15 @@ def main():
 
     os.makedirs(output_folder, exist_ok=True)
 
+    
+
     robot = UVS(robot_name, cam_idx=[0]).dh_robot # ignore camera for true cartesian real world fkin
-    fkin_basis = ForwardKinematics(robot)
+    
+    linearized_params_basis_flag=None
+    if phi_types[0]==2:
+        linearized_params_basis_flag = robot_name
+    
+    fkin_basis = ForwardKinematics(robot, linearized_params_basis_flag)
 
     # -------------------------
     # Data collection (ONCE)
@@ -289,10 +330,10 @@ def main():
         rng=rng,
         add_output_noise=0.05 #note: noise follows normal distribution
     )
-    print("TRAIN JOINTS")
-    print(train_joints)
-    print("TRAIN FKINS")
-    print(train_fkins)
+    # print("TRAIN JOINTS")
+    # print(train_joints)
+    # print("TRAIN FKINS")
+    # print(train_fkins)
 
     eval_joints, eval_fkins = fkin_basis.collect_data(
         num_trajectories=eval_num_trajs,
@@ -315,17 +356,24 @@ def main():
             results_path = os.path.join(output_folder, f"RESULTS-{output_name}.txt")
             with open(results_path, "w") as f:
 
-                phi_name = "poly" if phi_type == 0 else "trig"
+                if phi_type == 0:
+                    phi_name = "poly"
+                if phi_type == 1:
+                    phi_name = "trig"
+                if phi_type == 2:
+                    phi_name = "linearized_kinematic_structure"
+                    
                 logger.info(f"\n=== {phi_name} basis, degree={deg} ===")
 
                 # -------------------------
                 # Setup basis
                 # -------------------------
-                fkin_basis.set_phi(phi_deg=deg, phi_type=phi_type, activation_threshold=float(activation_threshold))
+                if phi_type !=2:
+                    fkin_basis.set_phi(phi_deg=deg, phi_type=phi_type, activation_threshold=float(activation_threshold))
                 f.write(f"Robot: {robot_name}\n")
                 f.write(f"=== {phi_name} basis, degree={deg} ===\n")
-                f.write(f"Initial basis elements per Jacobian entry: {fkin_basis.basis_obj_list[0].symbolic_basis}\n")
-
+                f.write(f"Initial basis elements per fkin entry: {fkin_basis.basis_obj_list[0].symbolic_basis}\n")
+                print(f"Initial basis elements per fkin entry: {fkin_basis.basis_obj_list[0].symbolic_basis}\n")
                 # -------------------------
                 # Train
                 # -------------------------
@@ -355,7 +403,7 @@ def main():
                 # Reduce + retrain
                 # -------------------------
                 f.write("PARETO CURVE:")
-                fkin_basis.pareto_frontier(
+                best_lambdas = fkin_basis.pareto_frontier(
                     train_pos=train_fkins,
                     train_joints=train_joints,
                     eval_pos=eval_fkins,    
@@ -365,7 +413,7 @@ def main():
                 )
 
                 f.write("TRAINING WITH SINDy BASIS:")
-                fkin_basis.sindy(train_fkins, train_joints)
+                fkin_basis.sindy(train_fkins, train_joints, best_lambdas)
 
                 # -------------------------
                 # Evaluate (after sindy)

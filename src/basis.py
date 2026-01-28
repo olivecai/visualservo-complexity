@@ -173,13 +173,13 @@ class Basis:
         '''
         predictions = np.array([self.get_prediction(q) for q in eval_a]).flatten()
         eval_b = np.array(eval_b)
-        logging.info(f"Evaluating basis for {self.name}:")
-        logging.info(f"Predictions: {predictions}")
-        logging.info(f"Ground Truth: {eval_b}")
+        # logging.info(f"Evaluating basis for {self.name}:")
+        # logging.info(f"Predictions: {predictions}")
+        # logging.info(f"Ground Truth: {eval_b}")
     
         errors = eval_b - predictions
         RSS = np.sum(errors**2)
-        logging.info(f"Residual sum of squares: {RSS}")
+        # logging.info(f"Residual sum of squares: {RSS}")
         return RSS
     
     def sindy_stlsq(self, train_b, train_a, lambda_val=None, max_iter=10):
@@ -228,6 +228,7 @@ class Basis:
             weights = weights.flatten()
 
         self.weights = weights
+        self.number_of_basis_elements = sum([1 for w in weights if w != 0])
         logger.info(f"Computed weights: {self.weights}")
         logger.info(f"Symbolic basis: {self.symbolic_basis}")
         return self.symbolic_basis, self.weights
@@ -272,7 +273,7 @@ class Basis:
         for i in range(len(lambda_values)):
             logger.info(f"lambda value: {lambda_values[i]:.2f}, num_basis_elements: {num_basis_elements_list[i]}, RSS: {RSS_list[i]}, AICC: {aicc_list[i]:.2f}")
         
-        # plt.show()
+        plt.show()
 
         if plot_name is not None:
             plt.savefig(plot_name)
@@ -330,7 +331,7 @@ if __name__ == "__main__":
     errors = basis_obj.evaluate(eval_b, eval_a)
     print("Evaluation Errors:", errors)
 
-    print("Now let's see that PARETO CURVE")
-    lambda_val, weights, RSS, num_basis_elements, min_aicc = basis_obj.pareto_frontier(train_b=train_b, train_a=train_a, eval_b=eval_b, eval_a=eval_a, lambda_values=np.linspace(0,1,11).tolist())
+    # print("Now let's see that PARETO CURVE")
+    # lambda_val, weights, RSS, num_basis_elements, min_aicc = basis_obj.pareto_frontier(train_b=train_b, train_a=train_a, eval_b=eval_b, eval_a=eval_a, lambda_values=np.linspace(0,1,11).tolist())
     
-    print(f"Best lambda: {lambda_val}, Weights: {weights}, RSS: {RSS}, Num Basis Elements: {num_basis_elements}, Min AICC: {min_aicc}")
+    # print(f"Best lambda: {lambda_val}, Weights: {weights}, RSS: {RSS}, Num Basis Elements: {num_basis_elements}, Min AICC: {min_aicc}")

@@ -252,3 +252,25 @@ https://royalsocietypublishing.org/rspa/article/473/2204/20170009/57451/Model-se
 the SINDy paper shows that we can do sparse regression PLUS a gaussian residual noise term.
 
 domain knowledge is trig terms
+
+'''
+Jan 15 2026
+
+SINDy module for Sparse Identification of Nonlinear Dynamical systems. Read 'Discovering governing equations from data by sparse identification of nonlinear dynamical systems'
+Steven L. Brunton et al for more information on extracting the governing equations of a dynamical system from data.
+
+After performing regression and reducing the basis, one can verify their model via AIC, the Akaike Information Criterion for model selection.
+Read 'Model selection for dynamical systems via sparse regression and information criteria' N. M. Mangan et al for more information
+on finding which basis is best.
+
+When you get AIC scores, compare del_AIC = AIC - AIC_min:
+    del_AIC <= 2: substantial support for the model
+    4 <= del_AIC <= 7: considerably less support for the model
+    del_AIC > 10: essentially no support for the model
+
+ AIC = m ln(RSS/m) + 2k
+
+ symbolic regression is an N-P hard problem, but if we use a large enough basis, we can solve it exactly (i think?? lets verify)
+
+ 
+ 
