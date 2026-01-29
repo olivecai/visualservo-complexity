@@ -37,7 +37,7 @@ P = DHSympyParams()
 
 
 
-def generate_symbolic_library(q, max_order=2, include_constant=True, primitive_sympy_functions=[sp.sin, sp.cos]):
+def generate_symbolic_library_multiply(q, max_order=2, include_constant=True, primitive_sympy_functions=[sp.sin, sp.cos]):
     """
     q: list of sympy symbols [q0, q1, ..., qn]
     """
@@ -70,6 +70,28 @@ def generate_symbolic_library(q, max_order=2, include_constant=True, primitive_s
 
     return library #type: list[sp.Expr]
 
+def generate_symbolic_library_additive(q, max_order=2, include_constant=True, primitive_sympy_functions=[sp.sin, sp.cos]):
+    '''
+    for (q0,q1), generates [sin(q0), cos(q0), sin(q1), cos(q1), sin(q0+q1), cos(q0+q1)]
+    '''
+    
+    library = []
+
+    
+    library.append(sp.Integer(1))
+
+    # single terms
+
+    # create the additive functions
+    for order in range(1, len(q)+1):
+        for combo in combinations(q, order):
+            for p in primitive_sympy_functions:
+                library.append(p(sp.Add(*combo)))
+
+    return library
+
+
+
 # create a basis to approximate the robot function
 class ForwardKinematics:
     def __init__(self, robot: DenavitHartenbergAnalytic, name=None, activation_threshold = 0.1):
@@ -99,6 +121,7 @@ class ForwardKinematics:
             if name:
                 print("KINEMATIC STRUCTURE INDEXED AT i:",self.get_kinematic_structure(name)[i])
                 new_entry.setup(params=self.params, activation_threshold=activation_threshold, symbolic_basis_expression=self.get_kinematic_structure(name)[i])
+
             self.basis_obj_list.append(new_entry)
         for i in range(self.n):
             print("num basis element", self.basis_obj_list[i].number_of_basis_elements)
@@ -113,8 +136,6 @@ class ForwardKinematics:
 
         #true
         dof2 = [[sp.sin(self.params[0])*sp.sin(self.params[1]), sp.cos(self.params[0])*sp.cos(self.params[1]), sp.cos(self.params[0])], [sp.sin(self.params[0])*sp.cos(self.params[1]), sp.sin(self.params[0]), sp.sin(self.params[1])*sp.cos(self.params[0])], []]
-        
-        dof2 = [[]]
         if name == 'dof2':
             return dof2
 
@@ -133,15 +154,23 @@ class ForwardKinematics:
         if primitive_sympy_functions==[]:
             if phi_type == 0:
                 primitive_sympy_functions = []
-            elif phi_type == 1:
+            elif phi_type == 1 or phi_type ==3:
                 primitive_sympy_functions = [sp.sin, sp.cos]
     
-        phi_func = generate_symbolic_library(
-            q=self.params,
-            max_order=phi_deg,
-            include_constant=True,
-            primitive_sympy_functions=primitive_sympy_functions)
+        if phi_type<=1:
+            phi_func = generate_symbolic_library_multiply(
+                q=self.params,
+                max_order=phi_deg,
+                include_constant=True,
+                primitive_sympy_functions=primitive_sympy_functions)
+        if phi_type==3:
+            phi_func  = generate_symbolic_library_additive(
+                q=self.params,
+                max_order=phi_deg,
+                include_constant=True,
+                primitive_sympy_functions=primitive_sympy_functions)
         
+            
         for entry in self.basis_obj_list:
             entry.setup(params=self.params, activation_threshold=activation_threshold, symbolic_basis_expression=phi_func)
 
@@ -243,6 +272,7 @@ class ForwardKinematics:
                 pos_entry_i_j :  Basis = self.basis_obj_list[i*self.m+j]
                 if lambda_vals:
                     pos_entry_i_j.activation_threshold = lambda_vals[i*self.m+j]
+                    print("LOGGING",pos_entry_i_j.activation_threshold)
                 _, pos_entry_i_j.weights = pos_entry_i_j.sindy_stlsq(train_pos[:,i*self.m+j], train_joints, lambda_val=pos_entry_i_j.activation_threshold)
         
     def pareto_frontier(self, train_pos, train_joints, eval_pos, eval_joints, lambda_values=np.linspace(0,1, 11), output_folder=None):
@@ -359,9 +389,11 @@ def main():
                 if phi_type == 0:
                     phi_name = "poly"
                 if phi_type == 1:
-                    phi_name = "trig"
+                    phi_name = "trig multiplicative"
                 if phi_type == 2:
                     phi_name = "linearized_kinematic_structure"
+                if phi_type == 3:
+                    phi_name = "trig additive"
                     
                 logger.info(f"\n=== {phi_name} basis, degree={deg} ===")
 

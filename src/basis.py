@@ -245,6 +245,28 @@ class Basis:
         else:
             return np.inf
         
+    def choose_pareto_optimal_elbow_point(self, x, y):
+        # normalize 
+        x_n = (x - x.min()) / (x.max() - x.min())
+        y_n = (y - y.min()) / (y.max() - y.min())
+
+        # line endpoints
+        p1 = np.array([x_n[0], y_n[0]])
+        p2 = np.array([x_n[-1], y_n[-1]])
+
+        # distance from point to line
+        def point_line_dist(p):
+            return np.abs(np.cross(p2 - p1, p1 - p)) / np.linalg.norm(p2 - p1)
+
+        distances = np.array([
+            point_line_dist(np.array([xi, yi]))
+            for xi, yi in zip(x_n, y_n)
+        ])
+
+        idx = np.argmax(distances)
+        return idx, x[idx], y[idx]
+
+        
     def pareto_frontier(self, train_b, train_a, eval_b, eval_a, lambda_values, plot_name=None):
         weights_list = []
         RSS_list=[]
@@ -278,9 +300,12 @@ class Basis:
         if plot_name is not None:
             plt.savefig(plot_name)
 
+        opt_idx, opt_num_elements, opt_rss = self.choose_pareto_optimal_elbow_point(x=np.array(num_basis_elements_list), y=np.array(RSS_list))
+        opt_lambda = float(lambda_values[opt_idx])
+
         #return the lambda val associated with the minimum aicc:
         # lambda, weights, RSS, num_basis_elements, min_aicc
-        return lambda_values[np.argmin(aicc_list)], weights_list[np.argmin(aicc_list)], RSS_list[np.argmin(aicc_list)], num_basis_elements_list[np.argmin(aicc_list)], min(aicc_list)   
+        return opt_lambda, weights_list[opt_idx], RSS_list[opt_idx], num_basis_elements_list[opt_idx], min(aicc_list)   
         
 if __name__ == "__main__":
     # Example usage
