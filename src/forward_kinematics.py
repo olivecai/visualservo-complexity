@@ -35,7 +35,42 @@ cos=np.cos
 
 P = DHSympyParams()
 
+def generate_symbolic_library_incremental_additive(
+    q,
+    max_order= None,
+    include_constant=True,
+    primitive_sympy_functions=[sp.sin, sp.cos],
+):
+    
+    primitive_sympy_functions=[sp.sin, sp.cos] #hardcode for now
 
+    library = []
+    active_where = []
+    n = len(q)
+
+    if include_constant:
+        library.append(sp.Integer(1))
+        active_where.append([1]*n)
+
+    group = 0
+
+    print("WHERE")
+    print(primitive_sympy_functions)
+
+    for i in range(n):
+        group = sp.Add(group, q[i])   # cumulative sum q1 + ... + qi
+        print(group)
+        for p in primitive_sympy_functions:
+            print(p)
+            library.append(p(group))
+            print(library)
+
+            mask = [0]*n
+            mask[:i+1] = [1]*(i+1)   # joints 0..i active
+            active_where.append(mask)
+            print("HERE", library)
+
+    return library
 
 def generate_symbolic_library_multiply(q, max_order=2, include_constant=True, primitive_sympy_functions=[sp.sin, sp.cos]):
     """
@@ -169,6 +204,13 @@ class ForwardKinematics:
                 max_order=phi_deg,
                 include_constant=True,
                 primitive_sympy_functions=primitive_sympy_functions)
+        if phi_type ==4: 
+             phi_func = generate_symbolic_library_incremental_additive(
+                q=self.params,
+                max_order=phi_deg,
+                include_constant=True,
+                primitive_sympy_functions=primitive_sympy_functions)
+        
         
             
         for entry in self.basis_obj_list:
@@ -394,6 +436,8 @@ def main():
                     phi_name = "linearized_kinematic_structure"
                 if phi_type == 3:
                     phi_name = "trig additive"
+                if phi_type == 4:
+                    phi_name = "trig incremental additive"
                     
                 logger.info(f"\n=== {phi_name} basis, degree={deg} ===")
 

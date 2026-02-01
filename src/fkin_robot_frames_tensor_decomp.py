@@ -3,9 +3,6 @@ Jan 28 2026
 
 This class will inherent methods from forward_kinematics.py
 but instead of just the end effector, we will get all the robot frames.
-
-Then we will perform tensor decomposition:
-Our tensor 
 '''
 
 from sklearn.preprocessing import PolynomialFeatures
@@ -17,6 +14,7 @@ import matplotlib.pyplot as plt
 from itertools import combinations, product
 
 from basis import Basis
+from forward_kinematics import ForwardKinematics, generate_symbolic_library_additive, generate_symbolic_library_multiply
 
 import numpy as np
 import sympy as sp
@@ -41,12 +39,44 @@ pi=np.pi
 
 P = DHSympyParams()
 
-from forward_kinematics import ForwardKinematics
 
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+def generate_symbolic_library_incremental_additive(
+    q,
+    max_order= None,
+    include_constant=True,
+    primitive_sympy_functions=[sp.sin, sp.cos],
+):
+    primitive_sympy_functions=[sp.sin, sp.cos] #hardcode for now
+
+    library = []
+    active_where = []
+    n = len(q)
+
+    if include_constant:
+        library.append(sp.Integer(1))
+        active_where.append([1]*n)
+
+    group = 0
+
+    print(primitive_sympy_functions)
+
+    for i in range(n):
+        group = sp.Add(group, q[i])   # cumulative sum q1 + ... + qi
+        print(group)
+        for p in primitive_sympy_functions:
+            print(p)
+            library.append(p(group))
+            print(library)
+
+            mask = [0]*n
+            mask[:i+1] = [1]*(i+1)   # joints 0..i active
+            active_where.append(mask)
+
+    return library, active_where
 
 def rank_one_tensor(factor_vectors):
     """
@@ -62,7 +92,6 @@ def rank_one_tensor(factor_vectors):
     for v in factor_vectors[1:]:
         T = np.tensordot(T, v, axes=0)
     return T.squeeze()
-
 
 
 def normalize(x, lower=0, upper=1, axis=0):
@@ -199,27 +228,75 @@ class ForwardKinematic_AllFrames(ForwardKinematics):
         logger.info(f"Tensor shape: {T.shape}")
         return T, joint_configs
     
+    def iterative_model(self, fkin_frames, joint_configs, basis_library, active_where):
+        '''
+        Docstring for iterative_model
+        
+        :param self: 
+        :param fkin_frames: an (N,F,S) shape tensor for Number of datapoints, F frames of the robot, S dimensions for workspace (ie, N=100 datapoint samples, F=2 frames of a 2 dof robot, S=3 for x,y,z cartesian directions or S=2 for u,v camera projection)
+        :param joint_configs: an (N,D) shape matrix for Number of datapoints, D degrees of freedom of the robot
+        :param basis_library: a list of length P, ie [1, sin, cos, etc etc]
+
+        perform regression for each frame and only use the terms that are allowed ie if we are solving for frame 2 then only joints 1 and 2 are utilized, so only terms that involve joints 1 and 2 are involved
+       
+        
+        or
+
+        for each joint frame, see the joints it uses
+        make a library of terms for those joints, and perform regression to select out of those combs
+        then we only need to include those terms in the next regression 
+
+        round 1
+        basis = [1, sin(q0), cos(q0)]
+        activated cos(q0)
+
+        round 2
+        basis = [cos(q0+q1), cos(q0-q1), cos(q0), sin(q0), cos(q1), sin(q1)]
+        activated cos(q0+q1), cos(q0)
+
+        round 3
+        basis = [cos(q0+q1+q2), cos(q0+q1-q2), cos(q0+q1), etc...]
+        activated ?
+
+        results in model?'''
 
 
-    
+
+    def model_all_frames(self, fkin_frames, joint_configs, basis_library):
+
+        print(f"frames: {fkin_frames}")
+        print(f"joint configs: {joint_configs}")
+        for i in range(fkin_frames.shape[1]):
+            print("i",i)
+            frame_i = fkin_frames[:,i,:]
+            joint_configs_i = joint_configs[:,:i]
+            print(f"frame i: {frame_i}")
+            print(f"joint configs i: {joint_configs}")
 
        
 
-robot_name='kinova'
+robot_name='dof2'
 robot = UVS(robot_name, cam_idx=[0]).dh_robot # ignore camera for true cartesian real world fkin
     
 rng = np.random.default_rng(1)
 a = ForwardKinematic_AllFrames(robot=robot)
+
 T, joint_configs = a.create_tensor(5, 10, rng=rng, add_input_noise=0, add_output_noise=0)
+
+basis_library = generate_symbolic_library_multiply(a.params, max_order=2, include_constant=True, primitive_sympy_functions=[sp.sin, sp.cos])
+
+
+
+exit
 print("T:")
 print(T)
+print("joint configs:\n",joint_configs)
 R=5
 weights, factors = parafac(
     tl.tensor(T),
     rank=R,
     normalize_factors=True
 )
-
 
 print("-"*8)
 print(f"weights: {weights}")
@@ -242,4 +319,42 @@ plot_factors(factors, mode_names=["N samples", "Frames", "Cartesian motion"])
 
 
 
+'''
+
+'''
+AX=B
+where A is joints, X is weights, B is fkin. X will show weights of which bases (inherent in A) have been activated.
+
+Now suppose we use multiple frames as part of our forward kinematics modelling: then
+A is N x D:
+[[t1 t2], [t1,t2], [t1,t2]] etc. N samples, each is D dof length
+
+B is [[[frame1x,frame1y,frame1z],[frame2x,frame2y,frame2z]], 
+      [[frame1x,frame1y,frame1z],[frame2x,frame2y,frame2z]],
+      ...
+      ]
+B is then N x F x S, since there are N samples, F frames (TODO should F == D?), and S spatial directions (in this case x y z but for UBVS it can be u,v, or u1,v1,u2,v2)
+
+Then, can we incrementally create the forward kinematics:
+Regression over joint data to get fkin basis for frame 1 ==> AX
+
+
+For one sample to find its values:
+A is 1 x D
+B is 1 x S
+
+X is D x S ????
+
+Or what if we had a matrix multiplication chain where each degree of freedom had three rotation matrices in R3 and we performed tensor decomposition:
+Ax=B, so
+D number of 3x3 rotation matrices * X = B (F x S) 
+
+What is happening to my dimensions...
+
+OR can i do SVD or tensor decomposition on each frame individually and then STACK those results together?
+
+1. get the datapoints
+2. transform the joints through the trig basis
+3. for each joint configuration, get every frame of the robot
+4. Then try to rebuild the kinematic structure using group regression
 '''
