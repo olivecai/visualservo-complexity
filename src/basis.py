@@ -128,7 +128,7 @@ class Basis:
         if alpha is None:
             alpha = self.activation_threshold
 
-        logger.info(f"Computing basis for Jacobian entry {self.name} using LASSO regression:")
+        logger.info(f"Computing basis for basis entry {self.name} using LASSO regression:")
         phi_matrix = np.vstack([self.eval_phi(q) for q in train_a])
         lasso = LassoCV(alphas=[alpha], cv=5).fit(phi_matrix, train_b)
     
@@ -150,7 +150,7 @@ class Basis:
         '''
         
 
-        logger.info(f"Computing basis for Jacobian entry {self.name}:")
+        logger.info(f"Computing basis for basis entry {self.name}:")
         # print(np.array(self.eval_phi(t) for t in train_a))
         weights, residuals, rank, s = np.linalg.lstsq( np.vstack([self.eval_phi(q) for q in train_a]), train_b, rcond=None)
         self.weights = weights.flatten()

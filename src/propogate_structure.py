@@ -50,7 +50,7 @@ class ForwardKinematic_AllFrames(ForwardKinematics):
         # q is a list
         Ts= self.robot.rtb_robot.fkine_all(q=np.array(q))[1:]
         # self.robot.rtb_robot.plot(q, block=True)
-        print("Ts:\n",Ts)
+        # print("Ts:\n",Ts)
         frames = [T.t.tolist() for T in Ts]
 
         return frames
@@ -65,9 +65,9 @@ class ForwardKinematic_AllFrames(ForwardKinematics):
         logger.info(f"Collecting {num_samples} with add_output_noise={add_output_noise}, add_input_noise={add_input_noise}")
 
         joint_configs = self.generate_joint_samples_via_trajectory(num_trajectories, num_pnts_per_traj, rng=rng)
+        joint_configs = [(q + rng.normal(0, add_input_noise, len(q))).tolist() for q in joint_configs]
         fkin_data = [self.forward_kin_all_frames(q) for q in joint_configs]
 
-        joint_configs = [(q + rng.normal(0, add_input_noise, len(q))).tolist() for q in joint_configs]
         fkin_data = [(fkin + rng.normal(0, add_output_noise, np.array(fkin).shape)).tolist() for fkin in fkin_data]
         logger.info(f"First 3 joint configs: {joint_configs[:5]}\nFirst 3 fkin data: {fkin_data[:5]}")
         return joint_configs, fkin_data
@@ -78,43 +78,10 @@ class ForwardKinematic_AllFrames(ForwardKinematics):
         T = np.array(fkin_data) 
         logger.info(f"Tensor shape: {T.shape}")
         return T, joint_configs
-    
-    def iterative_model(self, fkin_frames, joint_configs, basis_library, active_where):
-        '''
-        Docstring for iterative_model
-        
-        :param self: 
-        :param fkin_frames: an (N,F,S) shape tensor for Number of datapoints, F frames of the robot, S dimensions for workspace (ie, N=100 datapoint samples, F=2 frames of a 2 dof robot, S=3 for x,y,z cartesian directions or S=2 for u,v camera projection)
-        :param joint_configs: an (N,D) shape matrix for Number of datapoints, D degrees of freedom of the robot
-        :param basis_library: a list of length P, ie [1, sin, cos, etc etc]
-
-        perform regression for each frame and only use the terms that are allowed ie if we are solving for frame 2 then only joints 1 and 2 are utilized, so only terms that involve joints 1 and 2 are involved
-       
-        
-        or
-
-        for each joint frame, see the joints it uses
-        make a library of terms for those joints, and perform regression to select out of those combs
-        then we only need to include those terms in the next regression 
-
-        round 1
-        basis = [1, sin(q0), cos(q0)]
-        activated cos(q0)
-
-        round 2
-        basis = [cos(q0+q1), cos(q0-q1), cos(q0), sin(q0), cos(q1), sin(q1)]
-        activated cos(q0+q1), cos(q0)
-
-        round 3
-        basis = [cos(q0+q1+q2), cos(q0+q1-q2), cos(q0+q1), etc...]
-        activated ?
-
-        results in model?'''
-
         
 
     def model_all_frames(self, fkin_frames, joint_configs, basis_library):
-
+        # UNFINISHED
         print(f"frames: {fkin_frames}")
         print(f"joint configs: {joint_configs}")
         for i in range(fkin_frames.shape[1]):
@@ -125,7 +92,6 @@ class ForwardKinematic_AllFrames(ForwardKinematics):
             print(f"joint configs i: {joint_configs}")
 
        
-
 def generate_symbolic_library_incremental_additive(
     q,
     max_order= None,
@@ -169,6 +135,8 @@ def hierarchical_sparse_regression(
     lambda_root=5e-2,
 ):
     """
+    Currently not in use, since robotics toolbox and cvxpy have conflicting numpy versions
+
     Phi: (N, M) design matrix
     y:   (N,)   target
     groups_ext:  list of lists of column indices (extensions)
@@ -264,6 +232,7 @@ def recover_forward_kin(model: ForwardKinematic_AllFrames, joint_configs: np.arr
 
         ############### Now we have set up
         for frame_idx in range(fkin_data.shape[1]): #for each frame (workspace_dimension[i] is each frame in that workspace dimension)
+            print("SOLVING FOR ", workspace_dim, frame_idx)
             funcs_next=[]
             args_next=[]
             indicator=[]
@@ -347,21 +316,30 @@ def recover_forward_kin(model: ForwardKinematic_AllFrames, joint_configs: np.arr
 
             # fkin_data shape: (N, F, S)
             y = fkin_data[:, frame_idx, workspace_dim]  
+
+            Phi_mean = Phi.mean(axis=0, keepdims=True)
+            Phi_std  = Phi.std(axis=0, keepdims=True) + 1e-12
+            Phi_n = (Phi - Phi_mean) / Phi_std
+
+
             # solve for the frame and get back the vector weights
-            weights = hierarchical_sparse_regression_numpy(
-                Phi=Phi,
+            weights_n = hierarchical_sparse_regression_numpy(
+                Phi=Phi_n,
                 y=y,
                 groups_ext=groups_ext,
                 groups_root=groups_root,
                 lambda_ext=1e-2,
                 lambda_root=5e-2,
             )
+            weights = weights_n / Phi_std.ravel()
 
             print(f"WEIGHTS: \n{weights}")
 
             # active_mask = []
             # min_w = min(abs(weights))
             # max_w = max(abs(weights))
+            # TOLERANCE = (max_w+min_w)/2
+            # TOLERANCE = max(TOLERANCE, 0.1)
             
             # for i in range(len(weights)):
             #     if abs(weights[i]) > TOLERANCE:
@@ -370,10 +348,13 @@ def recover_forward_kin(model: ForwardKinematic_AllFrames, joint_configs: np.arr
             #         active_mask.append(0)
 
             abs_w = np.abs(weights)
-            w_max = abs_w.max() + 1e-12
+            order = np.argsort(abs_w)[::-1]
+            energy = np.cumsum(abs_w[order]**2)
+            energy /= (energy[-1] + 1e-12)
 
-            active_mask = (abs_w > 0.50 * w_max).astype(int)
-
+            keep = order[energy <= 0.99]          # keep terms explaining 99% of weight energy
+            active_mask = np.zeros_like(weights, dtype=int)
+            active_mask[keep] = 1
 
             print(f"ACTIVE MASK:\n{active_mask}")
             
@@ -398,7 +379,6 @@ def recover_forward_kin(model: ForwardKinematic_AllFrames, joint_configs: np.arr
         recovered_bases.append(recovered_basis)
 
     return recovered_bases
-
 
 def rank_one_tensor(factor_vectors):
     """
@@ -517,24 +497,71 @@ def compare_factors(factors, factors_actual, factors_ind=[0, 1, 2], fig=None):
 
 
 
-robot_name='dof3'
+robot_name='kinova'
 robot = UVS(robot_name, cam_idx=[0]).dh_robot # ignore camera for true cartesian real world fkin
     
 rng = np.random.default_rng(1)
 a = ForwardKinematic_AllFrames(robot=robot)
 
-T, joint_configs = a.create_tensor(5, 10, rng=rng, add_input_noise=0, add_output_noise=0)
+# T, joint_configs = a.create_tensor(5, 10, rng=rng, add_input_noise=0, add_output_noise=0)
 
 basis_library = generate_symbolic_library_multiply(a.params, max_order=2, include_constant=True, primitive_sympy_functions=[sp.sin, sp.cos])
 
-
 ###
-joint_configs, fkin_data = a.get_data(50, 1, rng, 0.0, 0.05)
+joint_configs, fkin_data = a.get_data(50, 1, rng, 0.0, 0.0)
 recovered_bases =recover_forward_kin(a, joint_configs, fkin_data)
 print("DONE")
 print(recovered_bases)
 
-exit
+# validate the data
+
+basis_objects =[]
+basis_objects.append(Basis('x'))
+basis_objects.append(Basis('y'))
+basis_objects.append(Basis('z'))
+rng_eval=np.random.default_rng(2)
+joint_configs_eval, fkin_data_eval = a.get_data(100, 1, rng, 0.0, 0.0)
+
+ee_idx = a.dof - 1
+dims = ["x", "y", "z"]
+
+fig, axes = plt.subplots(1, 3, figsize=(15, 4), sharex=True)
+
+for i in range(len(basis_objects)):
+    b:Basis=basis_objects[i]
+    b.setup(a.params, 1e-1, recovered_bases[i])
+    symbolic_basis, weights = b.train(train_b=np.array(fkin_data)[:,a.dof-1, i],train_a=np.array(joint_configs))
+    print(f"TRAINING: symbolic basis {symbolic_basis}, weights: {weights}")
+    RSS = b.evaluate(eval_b=np.array(fkin_data_eval)[:,a.dof-1, i], eval_a=joint_configs_eval)
+    print("EVALUATED RSS:", RSS)
+
+    y_training_pred=[]
+    for joint in joint_configs:
+        y_training_pred.append(b.get_prediction(joints=joint))
+    y_eval_pred =[]
+    for joint in joint_configs_eval:
+        y_eval_pred.append(b.get_prediction(joints=joint))
+
+    y_eval_true = np.array(fkin_data_eval)[:,a.dof-1, i]
+    y_training_true =np.array(fkin_data)[:,a.dof-1, i]
+
+
+    ax = axes[i]
+    ax.plot(y_eval_pred, "k.", alpha=0.6, label="y_eval_pred")
+    ax.plot(y_eval_true, "r.", alpha=0.3, label="y_eval_true")
+    ax.plot(y_training_pred, "g.", alpha=0.6, label="y_training_pred")
+    ax.plot(y_training_true, "b.", alpha=0.3, label="y_training_true")
+
+    ax.set_title(f"End-effector {dims[i]}")
+    ax.set_ylabel("Position")
+    ax.set_xlabel("Sample index")
+    ax.grid(True)
+    
+
+axes[0].legend()
+plt.tight_layout()
+plt.show()
+exit()
 print("T:")
 print(T)
 print("joint configs:\n",joint_configs)
