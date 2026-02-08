@@ -246,6 +246,7 @@ class Basis:
             return np.inf
         
     def choose_pareto_optimal_elbow_point(self, x, y):
+        '''x and y are all the points on the pareto curve'''
         # normalize 
         x_n = (x - x.min()) / (x.max() - x.min())
         y_n = (y - y.min()) / (y.max() - y.min())
