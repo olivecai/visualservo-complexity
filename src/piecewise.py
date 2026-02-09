@@ -38,14 +38,14 @@ def create_piecewise_sinusoid(sympy_function, knots):
     Returns a callable pw(arg) that produces a SymPy Piecewise linear interpolation
     of sympy_function(arg) over the knot interval [knots[0], knots[-1]].
 
-    IMPORTANT: No Mod/wrap is used here, so the expression is differentiable
-    (Piecewise branches differentiate fine).
+    note: the caller is responsible for passing arugments in acceptable domain
     """
     knots = list(knots)
     if len(knots) < 2:
         raise ValueError("Need at least 2 knots")
 
     def pw(arg):
+        ''' Creates a line y=mx+b'''
         pieces = []
         for i in range(len(knots) - 1):
             x0 = sp.nsimplify(knots[i])
@@ -55,6 +55,7 @@ def create_piecewise_sinusoid(sympy_function, knots):
 
             m = (y1 - y0) / (x1 - x0)
             c = y0 - m * x0
+
             expr = sp.simplify(m * arg + c)
 
             if i < len(knots) - 2:
@@ -70,17 +71,18 @@ def create_piecewise_sinusoid(sympy_function, knots):
     return pw
 
 
-pw = create_piecewise_sinusoid(sp.sin, np.linspace(0,2*pi,4))
+pw = create_piecewise_sinusoid(sp.sin, np.linspace(-2*pi,2*pi,9))
 
 x = sp.symbols('x')
 expr = pw(x)
 f = sp.lambdify(x, expr, "numpy")
-xs = np.linspace(-2*np.pi, 4*np.pi, 1000)
+xs = np.linspace(-2*np.pi, 2*np.pi, 1000)
 ys = f(xs)
 
-plt.plot(xs, ys)
-plt.ylim(-1.2, 1.2)
-plt.show()
+# plt.plot(xs, ys)
+# plt.ylim(-2, 2)
+# plt.show()
+
 
 def get_robot_rotation_matrix(name: str, sin_hat: list , cos_hat: list, vars: list) -> sp.Matrix:
     ''' sin_hat: list of approximation sin functions. 
@@ -231,17 +233,21 @@ def plot_spectral_norm_history(sig_true, sig_hat):
 
 def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3):
     # --- build symbolic FK (4x4) using your rotation-matrix chain
-    T = get_robot_rotation_matrix(name=robot_name, sin_hat=sin_list, cos_hat=cos_list, vars=vars)
+    true_sin = sp.sin
+    true_cos = sp.cos
 
+    T = get_robot_rotation_matrix(name=robot_name, sin_hat=sin_list, cos_hat=cos_list, vars=vars)
+    T_true = get_robot_rotation_matrix(name=robot_name, sin_hat=[true_sin]*len(sin_list), cos_hat=[true_cos]*len(cos_list), vars=vars)
     # --- end-effector position = translation column
-    p = sp.Matrix([T[0, 3], T[1, 3], T[2, 3]])          # 3x1
+    p = sp.Matrix([T[0, 3], T[1, 3], T[2, 3]])         # 3x1
+    p_true = sp.Matrix([T_true[0, 3], T_true[1, 3], T_true[2, 3]])   
     J = p.jacobian(vars)                               # 3 x dof
 
     # --- numeric callables
-    p_fun = sp.lambdify(vars, p, "numpy")
+    p_fun = sp.lambdify(vars, p_true, "numpy")
     J_fun = sp.lambdify(vars, J, "numpy")
         # knot range for numeric wrapping
-    k0 = 0.0
+    k0 = -2*np.pi
     k1 = 2*np.pi
     period = k1 - k0
 
@@ -257,9 +263,6 @@ def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3):
     def J_fun_wrapped(*q):
         qw = wrap_q(q)
         return J_fun(*qw)
-    
-
-
 
     # --- define the target in Cartesian space from TRUE FK at q_star (passed in)
     x_star = np.array(p_fun_wrapped(*q_star), dtype=float).reshape(-1)
@@ -301,17 +304,13 @@ def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3):
 def main():
     # initialize one of our robots via cmd line arg
     # (fallback to 3 if cmd_line_arg not defined)
-    try:
-        dof = int('dof2')
-    except Exception:
-        dof = 3
-
+    dof= 3
     vars = sp.symbols(f"q0:{dof}", real=True)
     robot_name = f"dof{dof}"
 
     # fixed test setup so both models are compared fairly
-    q0     = np.array([0.3, -0.2, 0.1][:dof], dtype=float)
-    q_star = np.array([1.0, -0.6, 0.4][:dof], dtype=float)
+    q0     = np.array([0.3, np.pi/4, 0.1][:dof], dtype=float)
+    q_star = np.array([0.1, np.pi/2, 0.4][:dof], dtype=float)
 
     # ---------------- True trig ----------------
     print("True Sin and Cos:")
@@ -328,13 +327,35 @@ def main():
 
     # ---------------- Piecewise trig ----------------
     print("Approximated Sin and Cos:")
-    knots = [0, pi/2, pi, 3*pi/2, 2*pi]  # 4 segments
+    knots = np.linspace(-2*pi,2*pi,9)  # 4 segments
+    
 
     sin_list_hat = []
     cos_list_hat = []
     for _ in range(dof):
         sin_list_hat.append(create_piecewise_sinusoid(sp.sin, knots))
         cos_list_hat.append(create_piecewise_sinusoid(sp.cos, knots))
+
+    x = sp.symbols('x')
+    expr = sin_list_hat[0](x)
+    f = sp.lambdify(x, expr, "numpy")
+    xs = np.linspace(-2*np.pi, 2*np.pi, 1000)
+    ys = f(xs)
+    plt.plot(xs, ys)
+    plt.ylim(-2, 2)
+    plt.show(block=True)
+
+
+    x = sp.symbols('x')
+    expr = cos_list_hat[0](x)
+    f = sp.lambdify(x, expr, "numpy")
+    xs = np.linspace(-2*np.pi, 2*np.pi, 1000)
+    ys = f(xs)
+    plt.plot(xs, ys)
+    plt.ylim(-2, 2)
+    plt.show(block=True)
+
+
 
     out_hat = script(
         sin_list=sin_list_hat,
