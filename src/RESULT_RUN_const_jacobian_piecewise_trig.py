@@ -54,6 +54,7 @@ def create_piecewise_sinusoid(sympy_function, knots):
             y1 = sympy_function(x1)
 
             m = (y1 - y0) / (x1 - x0)
+            m*=1.1
             c = y0 - m * x0
 
             expr = sp.simplify(m * arg + c)
@@ -136,7 +137,7 @@ def get_robot_rotation_matrix(name: str, sin_hat: list , cos_hat: list, vars: li
     return T
 
     
-def newton_raphson(f, J_inv, x0, tol=1e-6, max_iter=100, bounds=None):
+def newton_raphson(f, J_inv, x0, tol=1e-3, max_iter=100, bounds=None):
     """
     Finds the root of a function f(x) using the Newton-Raphson method.
 
@@ -157,6 +158,7 @@ def newton_raphson(f, J_inv, x0, tol=1e-6, max_iter=100, bounds=None):
     e_hist = []
 
     for n in range(max_iter):
+        Jpinv = np.array(J_inv(q), dtype=float)
         e = np.array(f(q), dtype=float).reshape(-1)
         e_norm = float(np.linalg.norm(e))
         e_hist.append(e_norm)
@@ -164,7 +166,6 @@ def newton_raphson(f, J_inv, x0, tol=1e-6, max_iter=100, bounds=None):
         if e_norm < tol:
             return q, n, np.array(q_hist), np.array(e_hist)
 
-        Jpinv = np.array(J_inv(q), dtype=float)
         dq = Jpinv @ e
         q = q + dq
 
@@ -175,7 +176,7 @@ def newton_raphson(f, J_inv, x0, tol=1e-6, max_iter=100, bounds=None):
 
         q_hist.append(q.copy())
 
-    print(f"Warning: Maximum iterations ({max_iter}) exceeded. Not converged to tol={tol}.")
+    # print(f"Warning: Maximum iterations ({max_iter}) exceeded. Not converged to tol={tol}.")
     return q, max_iter, np.array(q_hist), np.array(e_hist)
 
 
@@ -323,7 +324,14 @@ def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name,
     p = sp.Matrix([T[0, 3], T[1, 3], T[2, 3]])         # 3x1
     p_true = sp.Matrix([T_true[0, 3], T_true[1, 3], T_true[2, 3]])   
     J = p.jacobian(vars)                               # 3 x dof
-
+    print(J)
+    #evaluate J at the initial configuration q0 to see how the piecewise approximation affects the Jacobian at the start of the trajectory
+    J_initial = np.array(J.subs({var: val for var, val in zip(vars, q0)}), dtype=float)
+    print(f"Initial Jacobian at q0={q0}:\n{J_initial}")
+    #evaluate J at a cusp point of the piecewise function to see how the Jacobian behaves at a non-smooth point
+    cusp_q = [pi/6, pi/6, pi/6][:len(vars)]  # example cusp point where the piecewise function changes segments
+    J_cusp = np.array(J.subs({var: val for var, val in zip(vars, cusp_q)}), dtype=float)
+    print(f"Jacobian at cusp point q={cusp_q}:\n{J_cusp}")
     # --- numeric callables
     p_fun = sp.lambdify(vars, p_true, "numpy")
     J_fun = sp.lambdify(vars, J, "numpy")
@@ -382,8 +390,8 @@ def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name,
 
 
     print("\n--- Summary of convergence across joint space ---")
-    for r in results:
-        print(f"q0: {r['q0']}, q_star: {r['q_star']}, iters: {r['iters']}, final_error: {r['final_error']:.2e}, converged: {r['converged']}")
+    # for r in results:
+    #     print(f"q0: {r['q0']}, q_star: {r['q_star']}, iters: {r['iters']}, final_error: {r['final_error']:.2e}, converged: {r['converged']}")
 
 
     return results
@@ -508,10 +516,11 @@ def main():
     dof= 3
     vars = sp.symbols(f"q0:{dof}", real=True)
     robot_name = f"dof{dof}"
+    joint_ranges = [(pi/6, pi/2)] * dof
 
     # fixed test setup so both models are compared fairly
-    q0     = np.array([0.3, np.pi/4, 0.1][:dof], dtype=float)
-    q_star = np.array([0.1, np.pi/2, 0.4][:dof], dtype=float)
+    q0     = np.array([pi/4, pi/3, pi/3][:dof], dtype=float)
+    q_star = np.array([pi/5, pi/2, pi/4][:dof], dtype=float)
 
     # ---------------- True trig ----------------
     print("True Sin and Cos:")
@@ -533,13 +542,10 @@ def main():
     sin_list_hat = []
     cos_list_hat = []
     for _ in range(dof):
-        sin_knots = np.linspace(-2*pi, 2*pi, num=13)  # 12 segments
-        sin_knots = [-12*pi/6,-9*pi/6,-7*pi/6,-5*pi/6,-3*pi/6,-1*pi/6,
-              1*pi/6, 3*pi/6, 5*pi/6, 7*pi/6, 9*pi/6,12*pi/6]
+        
+        sin_knots = [pi/6,3*pi/6]
 
-        sin_knots = [k + pi/6 for k in sin_knots]  # shift by +π/2
-
-        cos_knots = [k + pi/6 for k in sin_knots]  # shift by +π/2
+        cos_knots = [pi/6,3*pi/6] 
 
         sin_list_hat.append(create_piecewise_sinusoid(sp.sin, sin_knots))
         cos_list_hat.append(create_piecewise_sinusoid(sp.cos, cos_knots))
@@ -550,7 +556,7 @@ def main():
     x = sp.symbols('x')
     expr = sin_list_hat[0](x)
     f = sp.lambdify(x, expr, "numpy")
-    xs = np.linspace(-2*np.pi, 2*np.pi, 1000)
+    xs = np.linspace(pi/6, pi/2, 1000)
     ys = f(xs)
     plt.plot(xs, ys)
     plt.ylim(-2, 2)
@@ -560,18 +566,18 @@ def main():
     x = sp.symbols('x')
     expr = cos_list_hat[0](x)
     f = sp.lambdify(x, expr, "numpy")
-    xs = np.linspace(-2*np.pi, 2*np.pi, 1000)
+    xs = np.linspace(pi/6,pi/2, 1000)
     ys = f(xs)
     plt.plot(xs, ys)
     plt.ylim(-2, 2)
     plt.show(block=True)
 
     results = evaluate_joint_space(
-        joint_ranges=[(pi/6, pi/2)] * dof,
+        joint_ranges=joint_ranges,
         sin_list=sin_list_hat,
         cos_list=cos_list_hat,
         vars=vars,
-        q0=[pi/4,pi/3,pi/3][:dof],
+        q0=q0,
         robot_name=robot_name)
 
     plot_convergence_results(results)
@@ -602,6 +608,17 @@ def main():
     print(f"Target x*: {x_star}")
     print(f"True:     iters={out_true['iters']}, final ||e||={e_true[-1]}")
     print(f"Piecewise iters={out_hat['iters']}, final ||e||={e_hat[-1]}")
+
+    #print out the spectral norm of the initial Jacobian for both models
+    J_true_initial = np.array(out_true["J_fun"](*out_true["q_hist"][0]), dtype=float)
+    J_hat_initial = np.array(out_hat["J_fun"](*out_hat["q_hist"][0]), dtype=float)
+    sig_true_initial = np.linalg.svd(J_true_initial, compute_uv=False)[0]
+    sig_hat_initial = np.linalg.svd(J_hat_initial, compute_uv=False)[0]
+    print(f"Initial Jacobian spectral norm: true={sig_true_initial:.4f}, piecewise={sig_hat_initial:.4f}")
+
+    # print out the initial Jacobian for both models
+    print(f"Initial Jacobian (true):\n{J_true_initial}")
+    print(f"Initial Jacobian (piecewise):\n{J_hat_initial}")
 
 
 

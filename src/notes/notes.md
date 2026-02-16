@@ -273,4 +273,7 @@ When you get AIC scores, compare del_AIC = AIC - AIC_min:
  symbolic regression is an N-P hard problem, but if we use a large enough basis, we can solve it exactly (i think?? lets verify)
 
  
- 
+ ## Feb 14 2026
+
+Okay we KNOW that the linear approximation of the transofrmation matrix can have us converge over a significant space
+
