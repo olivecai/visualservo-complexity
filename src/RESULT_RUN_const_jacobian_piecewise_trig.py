@@ -38,14 +38,16 @@ def create_piecewise_sinusoid(sympy_function, knots):
     Returns a callable pw(arg) that produces a SymPy Piecewise linear interpolation
     of sympy_function(arg) over the knot interval [knots[0], knots[-1]].
 
-    note: the caller is responsible for passing arugments in acceptable domain
+    note: the caller is responsible for passing argmuents in acceptable domain
     """
+    knots = [float(k) for k in list(knots)] 
     knots = list(knots)
     if len(knots) < 2:
         raise ValueError("Need at least 2 knots")
 
     def pw(arg):
         ''' Creates a line y=mx+b'''
+        
         pieces = []
         for i in range(len(knots) - 1):
             x0 = sp.nsimplify(knots[i])
@@ -157,8 +159,8 @@ def newton_raphson(f, J_inv, x0, tol=1e-3, max_iter=100, bounds=None):
     q_hist = [q.copy()]
     e_hist = []
 
+    Jpinv = np.array(J_inv(q), dtype=float)
     for n in range(max_iter):
-        Jpinv = np.array(J_inv(q), dtype=float)
         e = np.array(f(q), dtype=float).reshape(-1)
         e_norm = float(np.linalg.norm(e))
         e_hist.append(e_norm)
@@ -255,25 +257,25 @@ def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3):
     p_fun = sp.lambdify(vars, p_true, "numpy")
     J_fun = sp.lambdify(vars, J, "numpy")
 
-    #feb 14: getting rid of the numeric wrapping since the joint space has real constraints
-    #     # knot range for numeric wrapping
-    # k0 = -2*np.pi
-    # k1 = 2*np.pi
-    # period = k1 - k0
+    
+        # knot range for numeric wrapping
+    k0 = -2*np.pi
+    k1 = 2*np.pi
+    period = k1 - k0
 
 
-    # def wrap_q(q):
-    #     q = np.asarray(q, dtype=float)
-    #     return k0 + np.mod(q - k0, period)
+    def wrap_q(q):
+        q = np.asarray(q, dtype=float)
+        return k0 + np.mod(q - k0, period)
 
-    # # wrap inputs before calling lambdified sympy
-    # def p_fun_wrapped(*q):
-    #     qw = wrap_q(q)
-    #     return p_fun(*qw)
+    # wrap inputs before calling lambdified sympy
+    def p_fun_wrapped(*q):
+        qw = wrap_q(q)
+        return p_fun(*qw)
 
-    # def J_fun_wrapped(*q):
-    #     qw = wrap_q(q)
-    #     return J_fun(*qw)
+    def J_fun_wrapped(*q):
+        qw = wrap_q(q)
+        return J_fun(*qw)
 
     # --- define the target in Cartesian space from TRUE FK at q_star (passed in)
     # x_star = np.array(p_fun_wrapped(*q_star), dtype=float).reshape(-1)
@@ -326,6 +328,8 @@ def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name,
     J = p.jacobian(vars)                               # 3 x dof
     print(J)
     #evaluate J at the initial configuration q0 to see how the piecewise approximation affects the Jacobian at the start of the trajectory
+    q0 = [float(v) for v in q0]
+
     J_initial = np.array(J.subs({var: val for var, val in zip(vars, q0)}), dtype=float)
     print(f"Initial Jacobian at q0={q0}:\n{J_initial}")
     #evaluate J at a cusp point of the piecewise function to see how the Jacobian behaves at a non-smooth point
@@ -336,31 +340,15 @@ def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name,
     p_fun = sp.lambdify(vars, p_true, "numpy")
     J_fun = sp.lambdify(vars, J, "numpy")
         # knot range for numeric wrapping
-    k0 = -2*np.pi
-    k1 = 2*np.pi
-    period = k1 - k0
-
-    def wrap_q(q):
-        q = np.asarray(q, dtype=float)
-        return k0 + np.mod(q - k0, period)
-
-    # wrap inputs before calling lambdified sympy
-    def p_fun_wrapped(*q):
-        qw = wrap_q(q)
-        return p_fun(*qw)
-
-    def J_fun_wrapped(*q):
-        qw = wrap_q(q)
-        return J_fun(*qw)
 
     # --- visual servoing / IK error function: e(q) = x* - fkin(q)
     def f(q):
-        x = np.array(p_fun_wrapped(*q), dtype=float).reshape(-1)
+        x = np.array(p_fun(*q), dtype=float).reshape(-1)
         return x_star - x
 
     # --- damped pseudo-inverse Jacobian (stable)
     def J_inv(q):
-        Jn = np.array(J_fun_wrapped(*q), dtype=float)
+        Jn = np.array(J_fun(*q), dtype=float)
         JJt = Jn @ Jn.T
         return Jn.T @ np.linalg.inv(JJt + damping * np.eye(JJt.shape[0]))
 
@@ -377,7 +365,7 @@ def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name,
     results = []
     for q_star in joints:
          # --- define the target in Cartesian space from TRUE FK at q_star (passed in)
-        x_star = np.array(p_fun_wrapped(*q_star), dtype=float).reshape(-1)
+        x_star = np.array(p_fun(*q_star), dtype=float).reshape(-1)
         q_sol, iters, q_hist, e_hist = newton_raphson(f, J_inv, q0, tol=tol, max_iter=60)
         results.append({
             "q0": q0,
@@ -432,17 +420,17 @@ def plot_convergence_results(results):
         #     label="Converged"
         # )
 
-        # plt.scatter(
-        #     q0[0][0],
-        #     q0[0][1],
-        #     c="black",
-        #     s=200,
-        #     marker="o",
-        #     edgecolors="white",
-        #     linewidths=1.5,
-        #     label="Initial q0",
-        #     zorder=10
-        # )
+        plt.scatter(
+            q0[0][0],
+            q0[0][1],
+            c="black",
+            s=200,
+            marker="o",
+            edgecolors="white",
+            linewidths=1.5,
+            label="Initial q0",
+            zorder=10
+        )
 
         plt.colorbar(sc, label="Final error")
         plt.xlabel("q_star[0]")
@@ -519,7 +507,7 @@ def main():
     joint_ranges = [(pi/6, pi/2)] * dof
 
     # fixed test setup so both models are compared fairly
-    q0     = np.array([pi/4, pi/3, pi/3][:dof], dtype=float)
+    q0     = np.array([pi/4, pi/4, pi/3][:dof], dtype=float)
     q_star = np.array([pi/5, pi/2, pi/4][:dof], dtype=float)
 
     # ---------------- True trig ----------------
@@ -543,9 +531,9 @@ def main():
     cos_list_hat = []
     for _ in range(dof):
         
-        sin_knots = [pi/6,3*pi/6]
+        sin_knots = np.linspace(0,pi,5)
 
-        cos_knots = [pi/6,3*pi/6] 
+        cos_knots = np.linspace(0,pi,5)
 
         sin_list_hat.append(create_piecewise_sinusoid(sp.sin, sin_knots))
         cos_list_hat.append(create_piecewise_sinusoid(sp.cos, cos_knots))
@@ -556,7 +544,7 @@ def main():
     x = sp.symbols('x')
     expr = sin_list_hat[0](x)
     f = sp.lambdify(x, expr, "numpy")
-    xs = np.linspace(pi/6, pi/2, 1000)
+    xs = np.linspace(0,pi, 1000)
     ys = f(xs)
     plt.plot(xs, ys)
     plt.ylim(-2, 2)

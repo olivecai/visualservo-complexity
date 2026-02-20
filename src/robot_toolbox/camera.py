@@ -5,7 +5,6 @@ Oct 20 2025
 
 import sympy as sp
 import numpy as np
-import roboticstoolbox as rtb
 
 import logging
 
@@ -47,6 +46,9 @@ class Camera:
         worldpoint=sp.Matrix(worldpoint)
         if worldpoint.shape[0] != self.P.shape[1]:
             worldpoint = worldpoint.row_insert(worldpoint.shape[0], sp.Matrix([[1]]))
+        if worldpoint.shape[1] != 1:
+            worldpoint = worldpoint.reshape(worldpoint.shape[0], 1)
+
         try:
             x = self.P * worldpoint
         except:

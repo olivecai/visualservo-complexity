@@ -27,6 +27,7 @@ create a function to plot the robot in 3d space
 create a newton method function to solve visual servoing for some target in some joint workspace
 
 '''
+from robot_toolbox.camera import Camera
 
 import numpy as np
 import sympy as sp
@@ -40,6 +41,7 @@ def create_piecewise_sinusoid(sympy_function, knots):
 
     note: the caller is responsible for passing arugments in acceptable domain
     """
+    knots = [float(k) for k in list(knots)]  
     knots = list(knots)
     if len(knots) < 2:
         raise ValueError("Need at least 2 knots")
@@ -71,7 +73,7 @@ def create_piecewise_sinusoid(sympy_function, knots):
     return pw
 
 
-pw = create_piecewise_sinusoid(sp.sin, np.linspace(-2*pi,2*pi,9))
+pw = create_piecewise_sinusoid(sp.sin, np.linspace(float(-2*pi),float(2*pi),9))
 
 x = sp.symbols('x')
 expr = pw(x)
@@ -503,11 +505,18 @@ def plot_convergence_results(results):
 
 
 def main():
+
     # initialize one of our robots via cmd line arg
     # (fallback to 3 if cmd_line_arg not defined)
     dof= 3
     vars = sp.symbols(f"q0:{dof}", real=True)
     robot_name = f"dof{dof}"
+
+    cam = Camera(
+    rot_xaxis=0.0, rot_yaxis=0.0, rot_zaxis=0.0,
+    translation=[0.0, 0.0, 2.0],  
+    fx=400.0, fy=400.0, cx=0.0, cy=0.0
+    )
 
     # fixed test setup so both models are compared fairly
     q0     = np.array([0.3, np.pi/4, 0.1][:dof], dtype=float)
