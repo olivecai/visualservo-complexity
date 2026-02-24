@@ -21,3 +21,69 @@ Matrix([[cos(q0 + q1), sin(q0 + q1), 0, cos(q0) + cos(q0 + q1)], [-sin(q0 + q1),
 Matrix([[-0.35014087480217*(1 - cos(314159265358979/100000000000000))*(q0 + q1) + 1, 0.35014087480217*(q0 + q1)*sin(314159265358979/100000000000000), 0, -0.35014087480217*q0*(1 - cos(314159265358979/100000000000000)) - 0.35014087480217*(1 - cos(314159265358979/100000000000000))*(q0 + q1) + 2], [-0.35014087480217*(q0 + q1)*sin(314159265358979/100000000000000), -0.35014087480217*(1 - cos(314159265358979/100000000000000))*(q0 + q1) + 1, 0, -0.35014087480217*q0*sin(314159265358979/100000000000000) - 0.35014087480217*(q0 + q1)*sin(314159265358979/100000000000000)], [0, 0, 1, 0], [0, 0, 0, 1]])
 
 Matrix([[-x - 0.3*sin(t1)*sin(t2)*cos(t0) + 0.3*cos(t0)*cos(t1)*cos(t2) + 0.55*cos(t0)*cos(t1)], [-y - 0.3*sin(t0)*sin(t1)*sin(t2) + 0.3*sin(t0)*cos(t1)*cos(t2) + 0.55*sin(t0)*cos(t1)], [-z + 0.3*sin(t1)*cos(t2) + 0.55*sin(t1) + 0.3*sin(t2)*cos(t1)]])
+
+
+import sympy as sp
+
+t0, t1, t2 = sp.symbols('t0 t1 t2', real=True)
+L0, L1, L2 = sp.symbols('L0 L1 L2', real=True)
+x, y, z = sp.symbols('x y z', real=True)
+
+models = {
+
+# -------------------------------------------------
+# 1) PLANAR 2 DOF  (z, z)
+# -------------------------------------------------
+"dof2_planar": sp.Matrix([
+    L0*sp.cos(t0) + L1*sp.cos(t0 + t1),
+    L0*sp.sin(t0) + L1*sp.sin(t0 + t1),
+    0
+]),
+
+
+# -------------------------------------------------
+# 2) 2 DOF (z then local y)
+# fully expanded as linear sin/cos sums
+# -------------------------------------------------
+"dof2_zy": sp.Matrix([
+    L0*sp.cos(t0)
+    + sp.Rational(1,2)*L1*(sp.cos(t0 + t1) + sp.cos(t0 - t1)),
+
+    L0*sp.sin(t0)
+    + sp.Rational(1,2)*L1*(sp.sin(t0 + t1) + sp.sin(t0 - t1)),
+
+    L1*sp.sin(t1)
+]),
+
+
+# -------------------------------------------------
+# 3) PLANAR 3 DOF  (z, z, z)
+# -------------------------------------------------
+"dof3_planar": sp.Matrix([
+    L0*sp.cos(t0)
+    + L1*sp.cos(t0 + t1)
+    + L2*sp.cos(t0 + t1 + t2),
+
+    L0*sp.sin(t0)
+    + L1*sp.sin(t0 + t1)
+    + L2*sp.sin(t0 + t1 + t2),
+
+    0
+]),
+
+
+# -------------------------------------------------
+# 4) 3 DOF YOUR GIVEN MODEL (linearized form)
+# link lengths L0 (0.55), L1 (0.3)
+# -------------------------------------------------
+"dof3_given": sp.Matrix([
+    sp.Rational(1,2)*L1*(sp.cos(t0 + t1 + t2) + sp.cos(t0 - t1 - t2))
+    + sp.Rational(1,2)*L0*(sp.cos(t0 + t1) + sp.cos(t0 - t1)),
+
+    sp.Rational(1,2)*L1*(sp.sin(t0 + t1 + t2) + sp.sin(t0 - t1 - t2))
+    + sp.Rational(1,2)*L0*(sp.sin(t0 + t1) + sp.sin(t0 - t1)),
+
+    L1*sp.sin(t1 + t2) + L0*sp.sin(t1)
+])
+
+}
