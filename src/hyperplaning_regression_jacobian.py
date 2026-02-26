@@ -81,17 +81,17 @@ def create_piecewise_sinusoid(sympy_function, knots):
     return pw
 
 
-pw = create_piecewise_sinusoid(sp.sin, np.linspace(-2*pi,2*pi,9))
+# pw = create_piecewise_sinusoid(sp.sin, np.linspace(-2*pi,2*pi,9))
 
-x = sp.symbols('x')
-expr = pw(x)
-f = sp.lambdify(x, expr, "numpy")
-xs = np.linspace(-2*np.pi, 2*np.pi, 1000)
-ys = f(xs)
+# x = sp.symbols('x')
+# expr = pw(x)
+# f = sp.lambdify(x, expr, "numpy")
+# xs = np.linspace(-2*np.pi, 2*np.pi, 1000)
+# ys = f(xs)
 
-# plt.plot(xs, ys)
-# plt.ylim(-2, 2)
-# plt.show()
+# # plt.plot(xs, ys)
+# # plt.ylim(-2, 2)
+# # plt.show()
 
 
 def get_robot_rotation_matrix(name: str, sin_hat: list , cos_hat: list, vars: list) -> sp.Matrix:
@@ -149,7 +149,7 @@ def get_robot_rotation_matrix(name: str, sin_hat: list , cos_hat: list, vars: li
     return T
 
     
-def newton_raphson(f, J_inv, x0, tol=1e-3, max_iter=100, bounds=None, chord_newton=False):
+def newton_raphson(f, J_inv, x0, tol=1e-1, max_iter=100, bounds=None, chord_newton=False):
     """
     Finds the root of a function f(x) using the Newton-Raphson method.
 
@@ -164,6 +164,7 @@ def newton_raphson(f, J_inv, x0, tol=1e-3, max_iter=100, bounds=None, chord_newt
     float: The estimated root.
     int: The number of iterations taken.
     """
+    tol=1e-1
     q = np.array(x0, dtype=float).reshape(-1)
 
     q_hist = [q.copy()]
@@ -263,17 +264,41 @@ def plot_spectral_norm_history(sig_ct, sig_cm, sig_nt, sig_nm):
     plt.legend()
     plt.show()
 
-
-def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3, chord_newton=False):
+def get_p_and_p_true(sin_list, cos_list, vars, robot_name):
     # --- build symbolic FK (4x4) using your rotation-matrix chain
-    true_sin = sp.sin
-    true_cos = sp.cos
+    T_true = get_robot_fkin_expr(name=robot_name, vars=vars)
+    #T_true is in symbolic form, so directly substitute in the cos=cos_list[0] and sin=sin_list[0] to get the piecewise approximation of the true FK, which we will use for the Jacobian and visual servoing, but we will still use the true FK for the position and target definition
+    expr = T_true
+    print(T_true)
 
-    T = get_robot_rotation_matrix(name=robot_name, sin_hat=sin_list, cos_hat=cos_list, vars=vars)
-    T_true = get_robot_rotation_matrix(name=robot_name, sin_hat=[true_sin]*len(sin_list), cos_hat=[true_cos]*len(cos_list), vars=vars)
+    trig_terms = set()
+    for e in expr.atoms(sp.sin, sp.cos):
+        trig_terms.add(e)
+
+    subs_map = {}
+    for t in trig_terms:
+        arg = t.args[0]
+        if isinstance(t, sp.sin):
+            subs_map[t] = sin_list[0](arg)
+        else:
+            subs_map[t] = cos_list[0](arg)
+
+    T = expr.subs(subs_map)
+    print(T)
+    print("^ MODEL T FROM SUBS ")
+    
+    # T = get_robot_rotation_matrix(name=robot_name, sin_hat=sin_list, cos_hat=cos_list, vars=vars)
     # --- end-effector position = translation column
-    p = sp.Matrix([T[0, 3], T[1, 3], T[2, 3]])         # 3x1 #note that the piecewise approximation is used for the jacobian, but the true function is used for the position
-    p_true = sp.Matrix([T_true[0, 3], T_true[1, 3], T_true[2, 3]])   
+    # p = sp.Matrix([T[0, 3], T[1, 3], T[2, 3]])         # 3x1
+    # p_true = sp.Matrix([T_true[0, 3], T_true[1, 3], T_true[2, 3]])   
+    p=T;p_true=T_true
+    return p, p_true
+
+
+def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3, chord_newton=False, jacobian_eps_max=1.0,p=None,p_true=None, tol=1e-1):
+    # --- build symbolic FK (4x4) using your rotation-matrix chain
+    if p is None or p_true is None:
+        p,p_true = get_p_and_p_true(sin_list, cos_list, vars, robot_name)
 
     J = p.jacobian(vars)                               # 3 x dof
 
@@ -313,14 +338,15 @@ def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3, chord
 
     # --- damped pseudo-inverse Jacobian (stable)
     def J_inv(q):
+        
         # Jn = np.array(J_fun_wrapped(*q), dtype=float)
         Jn = np.array(J_fun(*q), dtype=float)
-
-        JJt = Jn @ Jn.T
-        return Jn.T @ np.linalg.inv(JJt + damping * np.eye(JJt.shape[0]))
+        J_pinv = np.linalg.pinv(Jn)
+        return get_perturbed_jacobian(J_pinv, eps_max=jacobian_eps_max)
+    
 
     # --- run Newton iterations in joint space
-    q_sol, iters, q_hist, e_hist = newton_raphson(f, J_inv, q0, tol=1e-6, max_iter=60, chord_newton=chord_newton)
+    q_sol, iters, q_hist, e_hist = newton_raphson(f, J_inv, q0, tol=tol, max_iter=60, chord_newton=chord_newton)
 
     # --- collect Cartesian trajectory and spectral norms
     x_hist = np.array([np.array(p_fun(*q), dtype=float).reshape(-1) for q in q_hist])
@@ -332,7 +358,7 @@ def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3, chord
     sig_hist = np.array(sig_hist)
 
     return {
-        "T": T, "p": p, "J": J,
+        "p": p, "J": J,
         "p_fun": p_fun, "J_fun": J_fun,
         "x_star": x_star,
         "q_sol": q_sol, "iters": iters,
@@ -341,10 +367,96 @@ def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3, chord
         "sig_hist": sig_hist,
     }
 
+def get_perturbed_jacobian(J, eps_max):
+    ''' Given a Jacobian matrix J, return a perturbed version of J where each element is independently scaled by a random factor in the range [1, eps_max]. This simulates the effect of approximation errors in the Jacobian. '''
+    m_eps = np.random.uniform(1,eps_max, size=J.shape)
+    return J * m_eps
 
-# --------------------------
-# main (updated: run 4 cases + CLI flag for chord/newton)
-# --------------------------
+def valid_jacobian_perturbation_bounds_main():
+    '''for a given maximum error scaling epsilon_limit, generate a scaling matrix m_eps where each element is sampled independently with m_eps_i_j ~ uniform(1,eps_limit). 
+    eps_lim_bounds = (-low,+high) something like (-1.5, 3)
+    for each value in that range, incrementing by 0.10 each time or something, perform 30 visual servoing runs and see how much error we accumulate (how to measure path completion proportion? measure how much error we reduce by each step)
+    then find the cutoff epsilon_limit value where we start to see significant degradation in convergence (e.g., we fail to reduce error by at least 50% on average across runs, or we fail to converge within max iterations, etc). This will give us an empirical bound on how much Jacobian perturbation we can tolerate before convergence degrades significantly. We can also plot the convergence curves for different epsilon_limit values to visualize the effect of Jacobian perturbation on convergence.
+    '''
+
+    dof = 2
+    planar=1
+    structure_type = "planar" if planar else "alt"
+    vars = sp.symbols(f"q0:{dof}", real=True)
+    robot_name = f"dof{dof}_{structure_type}"
+    joint_ranges = [(pi/5, pi/2)] * dof
+
+    tol=1e-1
+
+
+    # --- build piecewise trig lists once
+    sin_list_hat = []
+    cos_list_hat = []
+    for _ in range(dof):
+        sin_knots = np.linspace(-2*pi, 2*pi, 19)
+        cos_knots = np.linspace(-2*pi, 2*pi, 21)
+        sin_list_hat.append(create_piecewise_sinusoid(sp.sin, sin_knots))
+        cos_list_hat.append(create_piecewise_sinusoid(sp.cos, cos_knots))
+
+    
+
+    # x = sp.symbols('x')
+    # expr = sin_list_hat[0](x)
+    # f = sp.lambdify(x, expr, "numpy")
+    # xs = np.linspace(-2*np.pi, 2*np.pi, 1000)
+    # ys = f(xs)
+
+    # plt.plot(xs, ys)
+    # plt.ylim(-2, 2)
+    # plt.show()
+
+    x = sp.symbols('x')
+    expr = cos_list_hat[0](x)
+    f = sp.lambdify(x, expr, "numpy")
+    xs = np.linspace(-2*np.pi, 2*np.pi, 1000)
+    ys = f(xs)
+
+    plt.plot(xs, ys)
+    plt.ylim(-2, 2)
+    plt.show()
+
+    exit()
+    sin_list_true = [sp.sin] * dof
+    cos_list_true = [sp.cos] * dof
+
+    chord_flag=False
+
+    eps_lim_values = np.linspace(-1.5, 3, 100)  # 46 values from -1.5 to 3 in steps of 0.1
+    results = []
+
+    p,p_true = get_p_and_p_true(sin_list_hat, cos_list_hat, vars, robot_name) # get p and p_true once to reuse across runs
+    for eps in eps_lim_values:
+        #make q0 and q_star random within jointn lim:
+        q0 = np.random.uniform(joint_ranges[0][0], joint_ranges[0][1], size=dof)
+        q_star = np.random.uniform(joint_ranges[0][0], joint_ranges[0][1], size=dof)
+            # --- damped pseudo-inverse Jacobian (stable)
+        runs=[]
+        for run in range(20):
+            runs.append(script(sin_list_hat, cos_list_hat, vars, robot_name, q0, q_star, damping=1e-3, chord_newton=chord_flag, jacobian_eps_max=eps,p=p,p_true=p_true, tol=tol))
+        avg=np.mean([r["e_hist"][-1] for r in runs])
+        results.append(avg)
+
+    #now the convergence error for each script can be the last entry of e_hist, and we can plot the convergence error vs eps_lim_values to see how the Jacobian perturbation affects convergence. We can also look at the number of iterations taken for convergence as another metric.
+    convergence_errors = results
+    plt.figure()
+    plt.plot(eps_lim_values, convergence_errors, marker="o")
+    plt.xlabel("Jacobian perturbation limit (eps_lim)")
+    plt.ylabel("Final convergence error ||e||")
+    plt.title("Effect of Jacobian perturbation on convergence")
+    plt.grid(True)
+    plt.show()
+
+    # save the results with np 
+    np.savez("jacobian_perturbation_results.npz", eps_lim_values=eps_lim_values, convergence_errors=convergence_errors)
+
+    
+
+
 def eval_joint_space_main():
     dof = 2
     planar=1
@@ -365,9 +477,32 @@ def eval_joint_space_main():
         sin_list_hat.append(create_piecewise_sinusoid(sp.sin, sin_knots))
         cos_list_hat.append(create_piecewise_sinusoid(sp.cos, cos_knots))
 
+        x = sp.symbols('x')
+    expr = sin_list_hat[0](x)
+    f = sp.lambdify(x, expr, "numpy")
+    xs = np.linspace(-2*np.pi, 2*np.pi, 1000)
+    ys = f(xs)
+
+    plt.plot(xs, ys)
+    plt.ylim(-2, 2)
+    plt.show()
+
+    x = sp.symbols('x')
+    expr = cos_list_hat[0](x)
+    f = sp.lambdify(x, expr, "numpy")
+    xs = np.linspace(-2*np.pi, 2*np.pi, 1000)
+    ys = f(xs)
+
+    plt.plot(xs, ys)
+    plt.ylim(-2, 2)
+    plt.show()
+
     results = evaluate_joint_space(joint_ranges, sin_list_hat, cos_list_hat, q0, vars, robot_name)
     plot_convergence_results(results)
 
+# --------------------------
+# main (updated: run 4 cases + CLI flag for chord/newton)
+# --------------------------
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -383,8 +518,10 @@ def main():
     args = parser.parse_args()
 
     dof = 2
+    planar=1
+    structure_type = "planar" if planar else "alt"
     vars = sp.symbols(f"q0:{dof}", real=True)
-    robot_name = f"dof{dof}"
+    robot_name = f"dof{dof}_{structure_type}"
     joint_ranges = [(pi/6, pi/2)] * dof
 
     q0     = np.array([pi/4, pi/4, pi/3][:dof], dtype=float)
@@ -394,8 +531,8 @@ def main():
     sin_list_hat = []
     cos_list_hat = []
     for _ in range(dof):
-        sin_knots = np.linspace(0, pi, 15)
-        cos_knots = np.linspace(0, pi, 15)
+        sin_knots = np.linspace(-2*pi, 2*pi, 15)
+        cos_knots = np.linspace(-2*pi, 2*pi, 15)
         sin_list_hat.append(create_piecewise_sinusoid(sp.sin, sin_knots))
         cos_list_hat.append(create_piecewise_sinusoid(sp.cos, cos_knots))
 
@@ -475,10 +612,58 @@ def main():
     print(f"Newton True:  iters={out_nt['iters']}, final ||e||={e_nt[-1]}")
     print(f"Newton Model: iters={out_nm['iters']}, final ||e||={e_nm[-1]}")
 
+def get_robot_possible_linear_model_combinations(name:str='dof2', lower=(pi/6)-2*(pi/2), upper=3*(pi/2)):
+    
+    # sin_knots_6 = [-6.28318531, -4.71238898, -1.57079633, 1.57079633,  4.71238898,  6.28318531]
+    # sin_knots_10 = [-6.28318531, -5.23598776, -4.1887902, -2.0943951 , -1.04719755, 1.04719755,  2.0943951,   4.1887902 ,  5.23598776,  6.28318531]
+    # sin_knots_14 = [-6.28318531, -5.49778714, -4.71238898, -3.92699082, -2.35619449, -1.57079633, -0.78539816, 0.78539816, 1.57079633,  2.35619449,    3.92699082,  4.71238898, 5.49778714, 6.28318531]
+    # sin_knots_18 =[-6.28318531, -5.65486678, -5.02654825, -4.39822972, -3.76991118, -2.51327412, -1.88495559, -1.25663706, -0.62831853, 
+    #               0.62831853,  1.25663706,  1.88495559,  2.51327412,  3.76991118,  4.39822972,  5.02654825,  5.65486678, 6.28318531]
+
+    # cos_knots_5 = [-6.28318531, -3.14159265, 0, 3.14159265, 6.28318531]
+    # cos_knots_10 = [-6.28318531, -4.71238898, -3.14159265, -1.57079633, 0, 1.57079633, 3.14159265, 4.71238898, 6.28318531]
+    # cos_knots_13 = [-6.28318531, -5.49778714, -3.92699082, -3.14159265, -2.35619449, -0.78539816,  0.        ,  0.78539816,  2.35619449,  3.14159265,  3.92699082,  5.49778714,  6.28318531]
+    
+  
+  
+    sin_knots_A = [lower, -1.57079633, 1.57079633,  upper]
+    sin_knots_B = [lower, -2.0943951 , -1.04719755, 1.04719755,  2.0943951,   4.1887902 ,  upper]
+    sin_knots_C = [lower -2.35619449, -1.57079633, -0.78539816, 0.78539816, 1.57079633,  2.35619449,    3.92699082, upper]
+    sin_knots_D =[lower, -2.51327412, -1.88495559, -1.25663706, -0.62831853, 
+                  0.62831853,  1.25663706,  1.88495559,  2.51327412,  3.76991118,  4.39822972, upper]
+    sin_hat=create_piecewise_sinusoid(sp.sin, sin_knots_D)
+
+    cos_knots_A = [lower, 0, 3.14159265, upper]
+    cos_knots_B = [lower, -1.57079633, 0, 1.57079633, 3.14159265, upper]
+    cos_knots_C = [lower, -2.35619449, -0.78539816,  0.        ,  0.78539816,  2.35619449,  3.14159265,  3.92699082,  upper]
+    #[-6.28318531, -5.49778714, -4.71238898, -3.92699082, -3.14159265, -2.35619449, -1.57079633, -0.78539816,  0.        ,  0.78539816,  1.57079633,  2.35619449,  3.14159265,  3.92699082,  4.71238898, 5.49778714,  6.28318531]
+    cos_hat=create_piecewise_sinusoid(sp.cos, cos_knots_B)
+    # cos_hat=create_piecewise_sinusoid(sp.cos, np.linspace(lower, upper, 10))
+    x = sp.symbols('x')
+    expr = sin_hat(x)
+    f = sp.lambdify(x, expr, "numpy")
+    xs = np.linspace(lower+0.01, upper-0.01, 1000)
+    ys = f(xs)
+
+    plt.plot(xs, ys)
+    plt.ylim(-2, 2)
+    plt.show()
+
+
+    models={"dof2_planar": [[[9,9],[]]],
+    "dof2_alt": [[]],
+    "dof3_planar":[],
+    "dof3_alt":[]}
+    return models[name]
+
+
+get_robot_possible_linear_model_combinations()
+
 def get_robot_fkin_expr(name: str, vars):
     ''' return the fkin for dof2 planar, dof2 joint 1 rot about z axis and joint 2 rot about y axis, dof 3 planar, and dof 3 Matrix([[-x - 0.3*sin(t1)*sin(t2)*cos(t0) + 0.3*cos(t0)*cos(t1)*cos(t2) + 0.55*cos(t0)*cos(t1)], [-y - 0.3*sin(t0)*sin(t1)*sin(t2) + 0.3*sin(t0)*cos(t1)*cos(t2) + 0.55*sin(t0)*cos(t1)], [-z + 0.3*sin(t1)*cos(t2) + 0.55*sin(t1) + 0.3*sin(t2)*cos(t1)]])
      but all the fkin is expressed as linear combination of sin and cos. for instance instead of  cos(x)cos(y) - sin(x)sin(y) which has quadratic degree if sin and cos are repr by linear model, we can rewrite as cos(x+y) which is linear in sin and cos. This way, we can directly substitute the piecewise linear approximations of sin and cos into the fkin expression without increasing the degree of the approximation. 
      '''
+    #max argument to sin or cos given joint boundaries u and l: max=u*3, min=u-2*l
     t0 = vars[0]
     t1 = vars[1] if len(vars) > 1 else 0
     t2 = vars[2] if len(vars) > 2 else 0
@@ -531,18 +716,17 @@ def get_robot_fkin_expr(name: str, vars):
     # 4) 3 DOF (dylan)
     # -------------------------------------------------
     "dof3_alt": sp.Matrix([
-        0.5*L1*(sp.cos(t0 + t1 + t2) + sp.cos(t0 - t1 - t2))
-        + 0.5*L0*(sp.cos(t0 + t1) + sp.cos(t0 - t1)),
+        0.5*L0*(sp.cos(t0 + t1) + sp.cos(t0 - t1))+0.5*L1*(sp.cos(t0 + t1 + t2) + sp.cos(t0 - t1 - t2)),
 
-        0.5*L1*(sp.sin(t0 + t1 + t2) + sp.sin(t0 - t1 - t2))
-        + 0.5*L0*(sp.sin(t0 + t1) + sp.sin(t0 - t1)),
+        0.5*L0*(sp.sin(t0 + t1) + sp.sin(t0 - t1))+ 0.5*L1*(sp.sin(t0 + t1 + t2) + sp.sin(t0 - t1 - t2)),
 
-        L1*sp.sin(t1 + t2) + L0*sp.sin(t1)
+        L0*sp.sin(t1) + L1*sp.sin(t1 + t2) 
     ])
 
     }
 
     return models[name]
+
 import numpy as np
 import sympy as sp
 import matplotlib.pyplot as plt
@@ -610,10 +794,11 @@ def plot_basis_surfaces_xy(p_vec, t0, t1, t0_range, t1_range, fixed_subs=None, n
 
 
 
+
 # For your robot model:
 # p = models["dof3_given"]   # sp.Matrix([px,py,pz])
 # plot_basis_surfaces_xy(p, t0, t1, (np.pi/6, np.pi/2), (np.pi/6, np.pi/2), fixed_subs={t2: 0.3, L0:0.55, L1:0.3})
-def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name, damping=1e-3, tol=1e-3):
+def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name, damping=1e-3, tol=1e-1):
     true_sin = sp.sin
     true_cos = sp.cos
 
@@ -644,9 +829,10 @@ def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name,
     # p_true = sp.Matrix([T_true[0, 3], T_true[1, 3], T_true[2, 3]])   
     p=T;p_true=T_true
 
-    plot_basis_surfaces_xy(p, vars[0], vars[1], (np.pi/6, np.pi/2), (np.pi/6, np.pi/2))
+    print("plotting basis surfaces for x and y...")
+    # plot_basis_surfaces_xy(p, vars[0], vars[1], (np.pi/6, np.pi/2), (np.pi/6, np.pi/2))
 
-
+    print("Evaluating Jacobian...")
     J = p.jacobian(vars)                               # 3 x dof
     print(J)
     #evaluate J at the initial configuration q0 to see how the piecewise approximation affects the Jacobian at the start of the trajectory
@@ -684,7 +870,7 @@ def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name,
     
     joints = np.array(np.meshgrid(*grids)).T.reshape(-1, len(joint_ranges))
     print("joints", joints)
-
+    
     results = []
     for q_star in joints:
          # --- define the target in Cartesian space from TRUE FK at q_star (passed in)
@@ -857,9 +1043,24 @@ def plot_convergence_results(results):
         plt.show()  
 
 
+def get_best_model():
+    '''
+    for the robot we have its forward kinematics expressed as p.
 
+    p = sp Matrix ([x,y,z]) or later [u,v] or [u1,v1,u2,v2]
+    
+    for each dimension:
+        for each additive term in that dimension: (ie each linear term sin(t1), then sin(t1+t2), then ... in [sin(t1)+sin(t1+t2)+cos(t1)+cos(t1+t2)])
+            we will have a vector like [9,21,16,16] or something to rep how many linear pieces in that func.
+            [9, 9, 9, 9, 9]
+            []
+    '''
+
+
+
+# valid_jacobian_perturbation_bounds_main()
 # main()
-eval_joint_space_main()
+# eval_joint_space_main()
 
 # def script(sin_list, cos_list, vars):
 #     rotation_matrix = get_robot_rotation_matrix(sin_hat=sin_list, cos_hat=cos_list, vars)
