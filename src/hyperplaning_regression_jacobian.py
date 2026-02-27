@@ -398,8 +398,6 @@ def valid_jacobian_perturbation_bounds_main():
         sin_list_hat.append(create_piecewise_sinusoid(sp.sin, sin_knots))
         cos_list_hat.append(create_piecewise_sinusoid(sp.cos, cos_knots))
 
-    
-
     # x = sp.symbols('x')
     # expr = sin_list_hat[0](x)
     # f = sp.lambdify(x, expr, "numpy")
@@ -410,17 +408,17 @@ def valid_jacobian_perturbation_bounds_main():
     # plt.ylim(-2, 2)
     # plt.show()
 
-    x = sp.symbols('x')
-    expr = cos_list_hat[0](x)
-    f = sp.lambdify(x, expr, "numpy")
-    xs = np.linspace(-2*np.pi, 2*np.pi, 1000)
-    ys = f(xs)
+    # x = sp.symbols('x')
+    # expr = cos_list_hat[0](x)
+    # f = sp.lambdify(x, expr, "numpy")
+    # xs = np.linspace(-2*np.pi, 2*np.pi, 1000)
+    # ys = f(xs)
 
-    plt.plot(xs, ys)
-    plt.ylim(-2, 2)
-    plt.show()
+    # plt.plot(xs, ys)
+    # plt.ylim(-2, 2)
+    # plt.show()
 
-    exit()
+    # exit()
     sin_list_true = [sp.sin] * dof
     cos_list_true = [sp.cos] * dof
 
@@ -612,8 +610,12 @@ def main():
     print(f"Newton True:  iters={out_nt['iters']}, final ||e||={e_nt[-1]}")
     print(f"Newton Model: iters={out_nm['iters']}, final ||e||={e_nm[-1]}")
 
-def get_robot_possible_linear_model_combinations(name:str='dof2', lower=(pi/6)-2*(pi/2), upper=3*(pi/2)):
-    
+def get_robot_possible_linear_model_combinations(name:str='dof2_planar', lower=(pi/6)-2*(pi/2)-(pi/12), upper=3*(pi/2)+(pi/12)):
+    '''>>> (pi/6)-2*(pi/2)
+    -2.6179938779914944
+    >>> 3*pi/2
+    4.71238898038469'''
+        
     # sin_knots_6 = [-6.28318531, -4.71238898, -1.57079633, 1.57079633,  4.71238898,  6.28318531]
     # sin_knots_10 = [-6.28318531, -5.23598776, -4.1887902, -2.0943951 , -1.04719755, 1.04719755,  2.0943951,   4.1887902 ,  5.23598776,  6.28318531]
     # sin_knots_14 = [-6.28318531, -5.49778714, -4.71238898, -3.92699082, -2.35619449, -1.57079633, -0.78539816, 0.78539816, 1.57079633,  2.35619449,    3.92699082,  4.71238898, 5.49778714, 6.28318531]
@@ -623,50 +625,79 @@ def get_robot_possible_linear_model_combinations(name:str='dof2', lower=(pi/6)-2
     # cos_knots_5 = [-6.28318531, -3.14159265, 0, 3.14159265, 6.28318531]
     # cos_knots_10 = [-6.28318531, -4.71238898, -3.14159265, -1.57079633, 0, 1.57079633, 3.14159265, 4.71238898, 6.28318531]
     # cos_knots_13 = [-6.28318531, -5.49778714, -3.92699082, -3.14159265, -2.35619449, -0.78539816,  0.        ,  0.78539816,  2.35619449,  3.14159265,  3.92699082,  5.49778714,  6.28318531]
-    
   
   
     sin_knots_A = [lower, -1.57079633, 1.57079633,  upper]
     sin_knots_B = [lower, -2.0943951 , -1.04719755, 1.04719755,  2.0943951,   4.1887902 ,  upper]
     sin_knots_C = [lower -2.35619449, -1.57079633, -0.78539816, 0.78539816, 1.57079633,  2.35619449,    3.92699082, upper]
-    sin_knots_D =[lower, -2.51327412, -1.88495559, -1.25663706, -0.62831853, 
-                  0.62831853,  1.25663706,  1.88495559,  2.51327412,  3.76991118,  4.39822972, upper]
-    sin_hat=create_piecewise_sinusoid(sp.sin, sin_knots_D)
+    sin_knots_D=[lower, -2.51327412, -1.88495559, -1.25663706, -0.62831853, 0.62831853,  1.25663706,  1.88495559,  2.51327412,  3.76991118,  4.39822972, upper]
+    sin_hat_A =create_piecewise_sinusoid(sp.sin, sin_knots_A)
+    sin_hat_B= create_piecewise_sinusoid(sp.sin, sin_knots_B)
+    sin_hat_C = create_piecewise_sinusoid(sp.sin, sin_knots_C)
+    sin_hat_D = create_piecewise_sinusoid(sp.sin, sin_knots_D)
 
     cos_knots_A = [lower, 0, 3.14159265, upper]
-    cos_knots_B = [lower, -1.57079633, 0, 1.57079633, 3.14159265, upper]
+    cos_knots_B = [lower,  -0.52359878,  0.52359878,  2.61799388,  3.66519143, upper]
     cos_knots_C = [lower, -2.35619449, -0.78539816,  0.        ,  0.78539816,  2.35619449,  3.14159265,  3.92699082,  upper]
-    #[-6.28318531, -5.49778714, -4.71238898, -3.92699082, -3.14159265, -2.35619449, -1.57079633, -0.78539816,  0.        ,  0.78539816,  1.57079633,  2.35619449,  3.14159265,  3.92699082,  4.71238898, 5.49778714,  6.28318531]
-    cos_hat=create_piecewise_sinusoid(sp.cos, cos_knots_B)
-    # cos_hat=create_piecewise_sinusoid(sp.cos, np.linspace(lower, upper, 10))
-    x = sp.symbols('x')
-    expr = sin_hat(x)
-    f = sp.lambdify(x, expr, "numpy")
-    xs = np.linspace(lower+0.01, upper-0.01, 1000)
-    ys = f(xs)
+    cos_knots_D =[lower, -2.31485774, -0.99208189, -0.33069396,  0.33069396,  0.99208189,  2.31485774,  pi-0.33, pi+0.33, 3.9683275671795863, upper]
+    cos_hat_A=create_piecewise_sinusoid(sp.cos, cos_knots_A)
+    cos_hat_B=create_piecewise_sinusoid(sp.cos, cos_knots_B)
+    cos_hat_C=create_piecewise_sinusoid(sp.cos, cos_knots_C)
+    cos_hat_D=create_piecewise_sinusoid(sp.cos, cos_knots_D)
 
-    plt.plot(xs, ys)
-    plt.ylim(-2, 2)
-    plt.show()
+    # # cos_hat=create_piecewise_sinusoid(sp.cos, np.linspace(lower, upper, 10))
+    # x = sp.symbols('x')
+    # expr = cos_hat(x)
+    # f = sp.lambdify(x, expr, "numpy")
+    # xs = np.linspace(lower+0.01, upper-0.01, 1000)
+    # ys = f(xs)
+
+    # plt.plot(xs, ys)
+    # plt.ylim(-2, 2)
+    # plt.show()
 
 
-    models={"dof2_planar": [[[9,9],[]]],
-    "dof2_alt": [[]],
+    models={"dof2_planar": [[[sin_hat_A, sin_hat_A], [cos_hat_A, cos_hat_A]], 
+                            [[sin_hat_B, sin_hat_B], [cos_hat_B, cos_hat_B]],
+                           [ [sin_hat_C, sin_hat_C], [cos_hat_C, cos_hat_C]],
+                           [ [sin_hat_D, sin_hat_D], [cos_hat_D, cos_hat_D]],
+                           [ [sin_hat_A, sin_hat_B], [cos_hat_A, cos_hat_B]],
+                          [  [sin_hat_A, sin_hat_C], [cos_hat_A, cos_hat_C]],
+                          [  [sin_hat_A, sin_hat_D], [cos_hat_A, cos_hat_D]],
+                            [[sin_hat_B, sin_hat_A], [cos_hat_B, cos_hat_A]],
+                            [[sin_hat_B, sin_hat_C], [cos_hat_B, cos_hat_C]],
+                          [  [sin_hat_B, sin_hat_D], [cos_hat_B, cos_hat_D]],
+                           [ [sin_hat_C, sin_hat_A], [cos_hat_C, cos_hat_A]],
+                           [ [sin_hat_C, sin_hat_B], [cos_hat_C, cos_hat_B]],
+                           [ [sin_hat_C, sin_hat_D], [cos_hat_C, cos_hat_D]],
+                           [ [sin_hat_D, sin_hat_A], [cos_hat_D, cos_hat_A]],
+                            [[sin_hat_D, sin_hat_B], [cos_hat_D, cos_hat_B]],
+                           [ [sin_hat_D, sin_hat_C], [cos_hat_D, cos_hat_C]]],
+
+            "dof2_alt": [[]],
     "dof3_planar":[],
     "dof3_alt":[]}
+
+
     return models[name]
 
-
-get_robot_possible_linear_model_combinations()
-
-def get_robot_fkin_expr(name: str, vars):
+def get_robot_fkin_expr(name: str, vars, sin_hat_list=[], cos_hat_list=[]):
     ''' return the fkin for dof2 planar, dof2 joint 1 rot about z axis and joint 2 rot about y axis, dof 3 planar, and dof 3 Matrix([[-x - 0.3*sin(t1)*sin(t2)*cos(t0) + 0.3*cos(t0)*cos(t1)*cos(t2) + 0.55*cos(t0)*cos(t1)], [-y - 0.3*sin(t0)*sin(t1)*sin(t2) + 0.3*sin(t0)*cos(t1)*cos(t2) + 0.55*sin(t0)*cos(t1)], [-z + 0.3*sin(t1)*cos(t2) + 0.55*sin(t1) + 0.3*sin(t2)*cos(t1)]])
      but all the fkin is expressed as linear combination of sin and cos. for instance instead of  cos(x)cos(y) - sin(x)sin(y) which has quadratic degree if sin and cos are repr by linear model, we can rewrite as cos(x+y) which is linear in sin and cos. This way, we can directly substitute the piecewise linear approximations of sin and cos into the fkin expression without increasing the degree of the approximation. 
      '''
+    if sin_hat_list == []:
+        sin_hat_list = [sp.sin] * (1+len(vars))
+    if cos_hat_list == []:
+        cos_hat_list = [sp.cos] * (1+len(vars))
+
     #max argument to sin or cos given joint boundaries u and l: max=u*3, min=u-2*l
     t0 = vars[0]
     t1 = vars[1] if len(vars) > 1 else 0
     t2 = vars[2] if len(vars) > 2 else 0
+
+    while len(sin_hat_list) < 4:
+        sin_hat_list.append(sp.sin)
+        cos_hat_list.append(sp.cos)  
 
     L0=L1=L2=1
 
@@ -676,23 +707,23 @@ def get_robot_fkin_expr(name: str, vars):
     # 1) PLANAR 2 DOF  (z, z)
     # -------------------------------------------------
     "dof2_planar": sp.Matrix([
-        L0*sp.cos(t0) + L1*sp.cos(t0 + t1),
-        L0*sp.sin(t0) + L1*sp.sin(t0 + t1),
+        L0*cos_hat_list[0](t0) + L1*cos_hat_list[1](t0 + t1),
+        L0*sin_hat_list[0](t0) + L1*sin_hat_list[1](t0 + t1),
         0
     ]),
-
 
     # -------------------------------------------------
     # 2) 2 DOF (z then local y)
     # fully expanded as linear sin/cos sums
     # -------------------------------------------------
     "dof2_alt": sp.Matrix([
-        L0*sp.cos(t0)
-        + 0.5*L1*(sp.cos(t0 + t1) + sp.cos(t0 - t1)),
+        L0*cos_hat_list[0](t0)
+        + 0.5*L1*(cos_hat_list[1](t0 + t1) + cos_hat_list[2](t0 - t1)),
 
-        L0*sp.sin(t0)
-        + 0.5*L1*(sp.sin(t0 + t1) + sp.sin(t0 - t1)),
-        L1*sp.sin(t1)
+        L0*sin_hat_list[0](t0)
+        + 0.5*L1*(sin_hat_list[1](t0 + t1) + sin_hat_list[2](t0 - t1)),
+
+        L1*sin_hat_list[0](t1)
     ]),
 
 
@@ -700,13 +731,13 @@ def get_robot_fkin_expr(name: str, vars):
     # 3) PLANAR 3 DOF  (z, z, z)
     # -------------------------------------------------
     "dof3_planar": sp.Matrix([
-        L0*sp.cos(t0)
-        + L1*sp.cos(t0 + t1)
-        + L2*sp.cos(t0 + t1 + t2),
+          L0*cos_hat_list[0](t0)
+        + L1*cos_hat_list[1](t0 + t1)
+        + L2*cos_hat_list[2](t0 + t1 + t2),
 
-        L0*sp.sin(t0)
-        + L1*sp.sin(t0 + t1)
-        + L2*sp.sin(t0 + t1 + t2),
+          L0*sin_hat_list[0](t0)
+        + L1*sin_hat_list[1](t0 + t1)
+        + L2*sin_hat_list[2](t0 + t1 + t2),
 
         0
     ]),
@@ -716,24 +747,68 @@ def get_robot_fkin_expr(name: str, vars):
     # 4) 3 DOF (dylan)
     # -------------------------------------------------
     "dof3_alt": sp.Matrix([
-        0.5*L0*(sp.cos(t0 + t1) + sp.cos(t0 - t1))+0.5*L1*(sp.cos(t0 + t1 + t2) + sp.cos(t0 - t1 - t2)),
+        0.5*L0*(cos_hat_list[0](t0 + t1) + cos_hat_list[1](t0 - t1))+0.5*L1*(cos_hat_list[2](t0 + t1 + t2) + cos_hat_list[3](t0 - t1 - t2)),
 
-        0.5*L0*(sp.sin(t0 + t1) + sp.sin(t0 - t1))+ 0.5*L1*(sp.sin(t0 + t1 + t2) + sp.sin(t0 - t1 - t2)),
+        0.5*L0*(sin_hat_list[0](t0 + t1) + sin_hat_list[1](t0 - t1))+ 0.5*L1*(sin_hat_list[2](t0 + t1 + t2) + sin_hat_list[3](t0 - t1 - t2)),
 
-        L0*sp.sin(t1) + L1*sp.sin(t1 + t2) 
+        L0*sin_hat_list[0](t1) + L1*sin_hat_list[1](t1 + t2) 
     ])
 
     }
 
+
+    # # -------------------------------------------------
+    # # 1) PLANAR 2 DOF  (z, z)
+    # # -------------------------------------------------
+    # "dof2_planar": sp.Matrix([
+    #     L0*sp.cos(t0) + L1*sp.cos(t0 + t1),
+    #     L0*sp.sin(t0) + L1*sp.sin(t0 + t1),
+    #     0
+    # ]),
+
+
+    # # -------------------------------------------------
+    # # 2) 2 DOF (z then local y)
+    # # fully expanded as linear sin/cos sums
+    # # -------------------------------------------------
+    # "dof2_alt": sp.Matrix([
+    #     L0*sp.cos(t0)
+    #     + 0.5*L1*(sp.cos(t0 + t1) + sp.cos(t0 - t1)),
+
+    #     L0*sp.sin(t0)
+    #     + 0.5*L1*(sp.sin(t0 + t1) + sp.sin(t0 - t1)),
+    #     L1*sp.sin(t1)
+    # ]),
+
+
+    # # -------------------------------------------------
+    # # 3) PLANAR 3 DOF  (z, z, z)
+    # # -------------------------------------------------
+    # "dof3_planar": sp.Matrix([
+    #     L0*sp.cos(t0)
+    #     + L1*sp.cos(t0 + t1)
+    #     + L2*sp.cos(t0 + t1 + t2),
+
+    #     L0*sp.sin(t0)
+    #     + L1*sp.sin(t0 + t1)
+    #     + L2*sp.sin(t0 + t1 + t2),
+
+    #     0
+    # ]),
+
+
+    # # -------------------------------------------------
+    # # 4) 3 DOF (dylan)
+    # # -------------------------------------------------
+    # "dof3_alt": sp.Matrix([
+    #     0.5*L0*(sp.cos(t0 + t1) + sp.cos(t0 - t1))+0.5*L1*(sp.cos(t0 + t1 + t2) + sp.cos(t0 - t1 - t2)),
+
+    #     0.5*L0*(sp.sin(t0 + t1) + sp.sin(t0 - t1))+ 0.5*L1*(sp.sin(t0 + t1 + t2) + sp.sin(t0 - t1 - t2)),
+
+    #     L0*sp.sin(t1) + L1*sp.sin(t1 + t2) 
+    # ])
+
     return models[name]
-
-import numpy as np
-import sympy as sp
-import matplotlib.pyplot as plt
-
-# Ensures "projection='3d'" is registered (needed on some installs)
-import mpl_toolkits.mplot3d  # noqa: F401
-
 
 def _additive_terms(expr):
     """Return (terms_list, expanded_expr) where expanded_expr is trig-expanded."""
@@ -798,52 +873,55 @@ def plot_basis_surfaces_xy(p_vec, t0, t1, t0_range, t1_range, fixed_subs=None, n
 # For your robot model:
 # p = models["dof3_given"]   # sp.Matrix([px,py,pz])
 # plot_basis_surfaces_xy(p, t0, t1, (np.pi/6, np.pi/2), (np.pi/6, np.pi/2), fixed_subs={t2: 0.3, L0:0.55, L1:0.3})
-def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name, damping=1e-3, tol=1e-1):
-    true_sin = sp.sin
-    true_cos = sp.cos
+def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name, damping=1e-3, tol=1e-1, p=None, p_true=None):
+    if p is None or p_true is None:
+        true_sin = sp.sin
+        true_cos = sp.cos
 
-    T_true = get_robot_fkin_expr(name=robot_name, vars=vars)
-    #T_true is in symbolic form, so directly substitute in the cos=cos_list[0] and sin=sin_list[0] to get the piecewise approximation of the true FK, which we will use for the Jacobian and visual servoing, but we will still use the true FK for the position and target definition
-    expr = T_true
-    print(T_true)
+        T_true = get_robot_fkin_expr(name=robot_name, vars=vars)
+        #T_true is in symbolic form, so directly substitute in the cos=cos_list[0] and sin=sin_list[0] to get the piecewise approximation of the true FK, which we will use for the Jacobian and visual servoing, but we will still use the true FK for the position and target definition
+        expr = T_true
+        print(T_true)
 
-    trig_terms = set()
-    for e in expr.atoms(sp.sin, sp.cos):
-        trig_terms.add(e)
+        trig_terms = set()
+        for e in expr.atoms(sp.sin, sp.cos):
+            trig_terms.add(e)
 
-    subs_map = {}
-    for t in trig_terms:
-        arg = t.args[0]
-        if isinstance(t, sp.sin):
-            subs_map[t] = sin_list[0](arg)
-        else:
-            subs_map[t] = cos_list[0](arg)
+        subs_map = {}
+        for t in trig_terms:
+            arg = t.args[0]
+            if isinstance(t, sp.sin):
+                subs_map[t] = sin_list[0](arg)
+            else:
+                subs_map[t] = cos_list[0](arg)
 
-    T = expr.subs(subs_map)
-    print(T)
-    print("^ MODEL T FROM SUBS ")
-    
-    # T = get_robot_rotation_matrix(name=robot_name, sin_hat=sin_list, cos_hat=cos_list, vars=vars)
-    # --- end-effector position = translation column
-    # p = sp.Matrix([T[0, 3], T[1, 3], T[2, 3]])         # 3x1
-    # p_true = sp.Matrix([T_true[0, 3], T_true[1, 3], T_true[2, 3]])   
-    p=T;p_true=T_true
+        T = expr.subs(subs_map)
+        print(T)
+        print("^ MODEL T FROM SUBS ")
+        
+        # T = get_robot_rotation_matrix(name=robot_name, sin_hat=sin_list, cos_hat=cos_list, vars=vars)
+        # --- end-effector position = translation column
+        # p = sp.Matrix([T[0, 3], T[1, 3], T[2, 3]])         # 3x1
+        # p_true = sp.Matrix([T_true[0, 3], T_true[1, 3], T_true[2, 3]])   
+        p=T;p_true=T_true
 
     print("plotting basis surfaces for x and y...")
     # plot_basis_surfaces_xy(p, vars[0], vars[1], (np.pi/6, np.pi/2), (np.pi/6, np.pi/2))
 
     print("Evaluating Jacobian...")
     J = p.jacobian(vars)                               # 3 x dof
-    print(J)
-    #evaluate J at the initial configuration q0 to see how the piecewise approximation affects the Jacobian at the start of the trajectory
+    # print(J)
+    # #evaluate J at the initial configuration q0 to see how the piecewise approximation affects the Jacobian at the start of the trajectory
+    # print("q0:",q0)
+    # print("---")
     q0 = [float(v) for v in q0]
 
-    J_initial = np.array(J.subs({var: val for var, val in zip(vars, q0)}), dtype=float)
-    print(f"Initial Jacobian at q0={q0}:\n{J_initial}")
+    # J_initial = np.array(J.subs({var: val for var, val in zip(vars, q0)}), dtype=float)
+    # print(f"Initial Jacobian at q0={q0}:\n{J_initial}")
     #evaluate J at a cusp point of the piecewise function to see how the Jacobian behaves at a non-smooth point
-    cusp_q = [pi/6, pi/6, pi/6][:len(vars)]  # example cusp point where the piecewise function changes segments
-    J_cusp = np.array(J.subs({var: val for var, val in zip(vars, cusp_q)}), dtype=float)
-    print(f"Jacobian at cusp point q={cusp_q}:\n{J_cusp}")
+    # cusp_q = [pi/6, pi/6, pi/6][:len(vars)]  # example cusp point where the piecewise function changes segments
+    # J_cusp = np.array(J.subs({var: val for var, val in zip(vars, cusp_q)}), dtype=float)
+    # print(f"Jacobian at cusp point q={cusp_q}:\n{J_cusp}")
     # --- numeric callables
     p_hat_fun = sp.lambdify(vars, p, "numpy")
     p_fun = sp.lambdify(vars, p_true, "numpy")
@@ -866,10 +944,10 @@ def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name,
     This can help us understand how the piecewise approximation affects convergence across the workspace. '''
     # Create a grid of initial joint configurations
     grids = [np.linspace(r[0], r[1], num=10) for r in joint_ranges]
-    print("GRIDS:", grids)
+    # print("GRIDS:", grids)
     
     joints = np.array(np.meshgrid(*grids)).T.reshape(-1, len(joint_ranges))
-    print("joints", joints)
+    # print("joints", joints)
     
     results = []
     for q_star in joints:
@@ -1043,7 +1121,7 @@ def plot_convergence_results(results):
         plt.show()  
 
 
-def get_best_model():
+def get_best_model_main(name):
     '''
     for the robot we have its forward kinematics expressed as p.
 
@@ -1055,9 +1133,64 @@ def get_best_model():
             [9, 9, 9, 9, 9]
             []
     '''
+    name = 'dof2_planar'
+    if name=='dof2_planar' or name=='dof2_alt':
+        dof=2
+    elif name=='dof3_planar' or name=='dof3_alt':
+        dof=3
+    q0     = np.array([pi/4, pi/4, pi/3][:dof], dtype=float)
+    p_true = get_robot_fkin_expr(name=name, vars=sp.symbols(f'q0:{dof}'))
+    planar_combinations = get_robot_possible_linear_model_combinations(name=name)
 
 
+    print(planar_combinations)
 
+    result_convergence=[]
+    result_error=[]
+    for i in range(len(planar_combinations)):
+        sin_list, cos_list = planar_combinations[i]
+        print(f"Model {i+1}:")
+        print(f"  sin_list: {[s.__name__ for s in sin_list]}")
+        print(f"  cos_list: {[c.__name__ for c in cos_list]}")
+        p = get_robot_fkin_expr(name='dof2_planar', vars=sp.symbols("q0:2"), sin_hat_list=sin_list, cos_hat_list=cos_list)
+        #now we want to check two error metrics:
+        # 1. check the convergence of newtons method over the joint space
+        # 2. check how much error each entry had compared to the true 
+
+        results = evaluate_joint_space([(pi/6, pi/2)] * dof, sin_list=sin_list, cos_list=cos_list,vars=sp.symbols(f'q0:{dof}'), q0=q0, robot_name=name, p=p, p_true=p_true)
+        dim = len(results[0]["q_star"])
+        x_hat_stars = np.array([r["x_hat_star"] for r in results])
+        x_stars = np.array([r["x_star"] for r in results])
+        # q0 = np.array([r["q0"] for r in results])
+        q_stars = np.array([r["q_star"] for r in results])
+        errors = np.array([r["final_error"] for r in results])
+        converged = np.array([r["converged"] for r in results])
+        
+        # measure average normalized error and average normalized convergence rate across the joint space
+        avg_error = np.mean(errors)
+        avg_converged = sum(converged) / len(converged)
+        print(f"  Average final error: {avg_error:.4f}")
+        print(f"  Average convergence rate: {avg_converged:.2%}")
+
+        result_convergence.append(avg_converged)
+        result_error.append(avg_error)
+
+    # get the best model based on convergence rate and error
+    best_index = np.argmax(result_convergence)  # or use a weighted metric of convergence
+    best_model = planar_combinations[best_index]
+    print(f"Best model: {best_index+1} with convergence rate {result_convergence[best_index]:.2%} and average error {result_error[best_index]:.4f}")
+
+    # plot convergence rate vs error for each model
+    plt.figure()
+    plt.scatter(result_convergence, result_error)   
+    plt.xlabel("Average Convergence Rate")
+    plt.ylabel("Average Final Error")
+    plt.title(f"Model Comparison for {name}")
+    plt.grid(True)
+    plt.show()
+
+
+get_best_model_main(name='dof2_planar')
 # valid_jacobian_perturbation_bounds_main()
 # main()
 # eval_joint_space_main()
