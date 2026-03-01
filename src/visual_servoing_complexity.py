@@ -1,4 +1,18 @@
 '''
+We have a few questions to explore; 
+- Q1: How robust is the Jacobian to magnitude, and to directional, changes?
+- Q2: What is the effect of using a constant Jacobian over the space? 
+- Q3: How many linear hyperplanes can be used to coarsely approximate the visual servoing function?
+- Q4: What is the effect of more finely/coarsely modelling different joint contributions to the resulting kinematic structure? 
+Q1 and Q2 ask how much error can be permitted.
+Q3 and Q4 are structual modelling questions and assume we know how much error is permitted.
+
+There are a few different interesting experiments we can run.
+1. visual servoing error per jacobian entry and resulting convergence error (add perturbation to each entry where perturbation ~ uniform(1,eps_limit) where eps limit is a value from -1.5 to 3) and see the upper and lower perturbations that still warrant convergence: perturb_lower, perturb_upper
+2. combinatorially find the best model given different sin and cos structures: we want to explore whether the 
+'''
+
+'''
 Feb 5 2025
 
 Part A:
@@ -35,10 +49,12 @@ import argparse
 
 pi=np.pi
 
-def create_piecewise_hyperplane_function(sympy_function, knots):
-    '''given some n dimensional function, we create a hyperplane approximation of the function by evaluating the function at the knots and creating a piecewise linear function that connects the knots.
-    for instance, function sin(x)sin(y) '''
-    pass
+from robot_toolbox.camera import Camera
+
+cam1 = Camera(sp.pi,sp.pi/16,-sp.pi/2,[-1,0,5], 5,5, 0, 0) 
+cam2 = Camera(sp.pi+sp.pi/16, sp.pi/16, -sp.pi/2, [-1,-1,5], 5,5,0,0) 
+cams=[cam1,cam2]
+
 
 def create_piecewise_sinusoid(sympy_function, knots):
     """
@@ -92,62 +108,6 @@ def create_piecewise_sinusoid(sympy_function, knots):
 # # plt.plot(xs, ys)
 # # plt.ylim(-2, 2)
 # # plt.show()
-
-
-def get_robot_rotation_matrix(name: str, sin_hat: list , cos_hat: list, vars: list) -> sp.Matrix:
-    ''' sin_hat: list of approximation sin functions. 
-    for instance, 
-    if use sin_hat_1 in the base matrix, 
-    sin_hat_2 in second translation matrix, 
-    then sin=[sin_hat_1, sin_hat_2]
-    
-    Note that sin_hat, cos_hat, vars must be the same length lists (for each link use a cos or sin approximation)'''
-    Rxy_mats=[]
-    Rxz_mats=[]
-
-    dof = len(vars)
-    def Rz(angle, sfun, cfun):
-        c = cfun(angle)
-        s = sfun(angle)
-        return sp.Matrix([
-            [c,  s, 0, 0],
-            [-s, c, 0, 0],
-            [0,  0, 1, 0],
-            [0,  0, 0, 1],
-        ])
-    
-    def Tx(dist):
-        return sp.Matrix([
-            [1, 0, 0, dist],
-            [0, 1, 0, 0],
-            [0, 0, 1, 0],
-            [0, 0, 0, 1],
-        ])
-    
-    # 3 dof robot in terms of transformation matrices
-    # 2 dof robot in terms of transofmraation matrices
-    T = sp.eye(4)
-    if name == 'dof2': #planar 2 dof, L1 = 1, L2 = 1
-        if dof != 2:
-            raise ValueError("name='dof2' expects 2 vars")
-        T = T * Rz(vars[0], sin_hat[0], cos_hat[0]) * Tx(1)
-        T = T * Rz(vars[1], sin_hat[1], cos_hat[1]) * Tx(1)
-
-    elif name == "dof3": # planar 3 dof, L1=L2=L3=1
-        if dof != 3:
-            raise ValueError("name='dof3' expects 3 vars")
-        T = T * Rz(vars[0], sin_hat[0], cos_hat[0]) * Tx(1)
-        T = T * Rz(vars[1], sin_hat[1], cos_hat[1]) * Tx(1)
-        T = T * Rz(vars[2], sin_hat[2], cos_hat[2]) * Tx(1)
-
-    else:
-        raise ValueError("Only 'dof2' and 'dof3' are implemented in this simple demo")
-
-    #simplify T
-    # T = sp.simplify(T)
-    print(f"Rotation matrix for {name} with vars {vars}:\n{T}")
-    return T
-
     
 def newton_raphson(f, J_inv, x0, tol=1e-1, max_iter=100, bounds=None, chord_newton=False, camera_projection=0):
     """
@@ -200,19 +160,60 @@ def newton_raphson(f, J_inv, x0, tol=1e-1, max_iter=100, bounds=None, chord_newt
 # plotting (updated: 4 curves each)
 # --------------------------
 def plot_cartesian_trajectory(xs_ct, xs_cm, xs_nt, xs_nm, x_star):
-    plt.figure()
-    plt.plot(xs_ct[:, 0], xs_ct[:, 1], marker="o", label="Chord: True trig")
-    plt.plot(xs_cm[:, 0], xs_cm[:, 1], marker="o", label="Chord: Model trig")
-    plt.plot(xs_nt[:, 0], xs_nt[:, 1], marker="o", label="Newton: True trig")
-    plt.plot(xs_nm[:, 0], xs_nm[:, 1], marker="o", label="Newton: Model trig")
-    plt.scatter([x_star[0]], [x_star[1]], marker="x", s=90, label="Target")
-    plt.axis("equal")
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.title("End-effector trajectory (Cartesian)")
-    plt.grid(True)
-    plt.legend()
-    plt.show()
+    """
+    xs_* are either:
+      - (T,2) for one camera: [u,v]
+      - (T,4) for two cameras: [u1,v1,u2,v2]
+    x_star is either (2,) or (4,)
+    """
+    xs_ct_list = split_uv(xs_ct)
+    xs_cm_list = split_uv(xs_cm)
+    xs_nt_list = split_uv(xs_nt)
+    xs_nm_list = split_uv(xs_nm)
+
+    x_star = np.asarray(x_star).reshape(-1)
+    if x_star.size == 2:
+        stars = [x_star]
+    elif x_star.size == 4:
+        stars = [x_star[0:2], x_star[2:4]]
+    else:
+        raise ValueError(f"x_star must be size 2 or 4, got {x_star.size}")
+
+    ncam = len(xs_ct_list)
+
+    if ncam == 1:
+        plt.figure()
+        plt.plot(xs_ct_list[0][:, 0], xs_ct_list[0][:, 1], marker="o", label="Chord: True")
+        plt.plot(xs_cm_list[0][:, 0], xs_cm_list[0][:, 1], marker="o", label="Chord: Model")
+        plt.plot(xs_nt_list[0][:, 0], xs_nt_list[0][:, 1], marker="o", label="Newton: True")
+        plt.plot(xs_nm_list[0][:, 0], xs_nm_list[0][:, 1], marker="o", label="Newton: Model")
+        plt.scatter([stars[0][0]], [stars[0][1]], marker="x", s=90, label="Target")
+        plt.xlabel("u (pixels)")
+        plt.ylabel("v (pixels)")
+        plt.title("Image-plane trajectory (u,v)")
+        plt.grid(True)
+        plt.legend()
+        plt.show()
+
+    elif ncam == 2:
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        for i, ax in enumerate(axes):
+            ax.plot(xs_ct_list[i][:, 0], xs_ct_list[i][:, 1], marker="o", label="Chord: True")
+            ax.plot(xs_cm_list[i][:, 0], xs_cm_list[i][:, 1], marker="o", label="Chord: Model")
+            ax.plot(xs_nt_list[i][:, 0], xs_nt_list[i][:, 1], marker="o", label="Newton: True")
+            ax.plot(xs_nm_list[i][:, 0], xs_nm_list[i][:, 1], marker="o", label="Newton: Model")
+            ax.scatter([stars[i][0]], [stars[i][1]], marker="x", s=90, label="Target")
+            ax.set_xlabel("u (pixels)")
+            ax.set_ylabel("v (pixels)")
+            ax.set_title(f"Camera {i+1}")
+            ax.grid(True)
+            ax.legend()
+        fig.suptitle("Image-plane trajectory (u,v)")
+        plt.tight_layout()
+        plt.show()
+
+    else:
+        raise ValueError(f"Only 1 or 2 cameras supported, got {ncam}")
 
 
 
@@ -264,9 +265,9 @@ def plot_spectral_norm_history(sig_ct, sig_cm, sig_nt, sig_nm):
     plt.legend()
     plt.show()
 
-def get_p_and_p_true(sin_list, cos_list, vars, robot_name):
+def get_p_and_p_true(sin_list, cos_list, vars, robot_name,cameras=[cam1,cam2]):
     # --- build symbolic FK (4x4) using your rotation-matrix chain
-    T_true = get_robot_fkin_expr(name=robot_name, vars=vars)
+    T_true = get_robot_fkin_expr(name=robot_name, vars=vars, cameras=cameras)
     #T_true is in symbolic form, so directly substitute in the cos=cos_list[0] and sin=sin_list[0] to get the piecewise approximation of the true FK, which we will use for the Jacobian and visual servoing, but we will still use the true FK for the position and target definition
     expr = T_true
     print(T_true)
@@ -298,7 +299,7 @@ def get_p_and_p_true(sin_list, cos_list, vars, robot_name):
 def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3, chord_newton=False, jacobian_eps_max=1.0,p=None,p_true=None, tol=1e-1):
     # --- build symbolic FK (4x4) using your rotation-matrix chain
     if p is None or p_true is None:
-        p,p_true = get_p_and_p_true(sin_list, cos_list, vars, robot_name)
+        p,p_true = get_p_and_p_true(sin_list, cos_list, vars, robot_name, cameras=cams)
 
     J = p.jacobian(vars)                               # 3 x dof
 
@@ -396,10 +397,10 @@ def valid_jacobian_perturbation_bounds_main():
 
             chord_flag=False
 
-            eps_lim_values = np.linspace(-1.5, 3, 100)  # 100 alues from -1.5 to 3 in steps of 0.1
+            eps_lim_values = np.linspace(-1.5, 3, 100)  # 46 values from -1.5 to 3 in steps of 0.1
             results = []
 
-            p,p_true = get_p_and_p_true(sin_list_true, cos_list_true, vars, robot_name) # get p and p_true once to reuse across runs
+            p,p_true = get_p_and_p_true(sin_list_true, cos_list_true, vars, robot_name, cameras=cams) # get p and p_true once to reuse across runs
             for eps in eps_lim_values:
                 #make q0 and q_star random within jointn lim:
                 q0 = np.random.uniform(joint_ranges[0][0], joint_ranges[0][1], size=dof)
@@ -409,20 +410,21 @@ def valid_jacobian_perturbation_bounds_main():
                 for run in range(50):
                     runs.append(script(sin_list_true, cos_list_true, vars, robot_name, q0, q_star, damping=1e-3, chord_newton=chord_flag, jacobian_eps_max=eps,p=p,p_true=p_true, tol=tol))
                 avg=np.mean([r["e_hist"][-1] for r in runs])
+                print(f"eps_lim: {eps:.2f}, avg final error: {avg:.4f}")
                 results.append(avg)
 
             #now the convergence error for each script can be the last entry of e_hist, and we can plot the convergence error vs eps_lim_values to see how the Jacobian perturbation affects convergence. We can also look at the number of iterations taken for convergence as another metric.
             convergence_errors = results
-            plt.figure()
-            plt.plot(eps_lim_values, convergence_errors, marker="o")
-            plt.xlabel("Jacobian perturbation limit (eps_lim)")
-            plt.ylabel("Final convergence error ||e||")
-            plt.title("Effect of Jacobian perturbation on convergence")
-            plt.grid(True)
-            plt.show()
+            # plt.figure()
+            # plt.plot(eps_lim_values, convergence_errors, marker="o")
+            # plt.xlabel("Jacobian perturbation limit (eps_lim)")
+            # plt.ylabel("Final convergence error ||e||")
+            # plt.title("Effect of Jacobian perturbation on convergence")
+            # plt.grid(True)
+            # plt.show()
 
             # save the results with np 
-            np.savez(f"jacobian_perturbation_results_{robot_name}.npz", eps_lim_values=eps_lim_values, convergence_errors=convergence_errors)
+            np.savez(f"jacobian_perturbation_results_{robot_name}_vs.npz", eps_lim_values=eps_lim_values, convergence_errors=convergence_errors)
 
             
 
@@ -653,7 +655,7 @@ def get_robot_possible_linear_model_combinations(name:str='dof2_planar', lower=(
 
     return models[name]
 
-def get_robot_fkin_expr(name: str, vars, sin_hat_list=[], cos_hat_list=[]):
+def get_robot_fkin_expr(name: str, vars, sin_hat_list=[], cos_hat_list=[], cameras=[cam1,cam2]):
     ''' return the fkin for dof2 planar, dof2 joint 1 rot about z axis and joint 2 rot about y axis, dof 3 planar, and dof 3 Matrix([[-x - 0.3*sin(t1)*sin(t2)*cos(t0) + 0.3*cos(t0)*cos(t1)*cos(t2) + 0.55*cos(t0)*cos(t1)], [-y - 0.3*sin(t0)*sin(t1)*sin(t2) + 0.3*sin(t0)*cos(t1)*cos(t2) + 0.55*sin(t0)*cos(t1)], [-z + 0.3*sin(t1)*cos(t2) + 0.55*sin(t1) + 0.3*sin(t2)*cos(t1)]])
      but all the fkin is expressed as linear combination of sin and cos. for instance instead of  cos(x)cos(y) - sin(x)sin(y) which has quadratic degree if sin and cos are repr by linear model, we can rewrite as cos(x+y) which is linear in sin and cos. This way, we can directly substitute the piecewise linear approximations of sin and cos into the fkin expression without increasing the degree of the approximation. 
      '''
@@ -728,8 +730,7 @@ def get_robot_fkin_expr(name: str, vars, sin_hat_list=[], cos_hat_list=[]):
 
     }
 
-
-    # # -------------------------------------------------
+       # # -------------------------------------------------
     # # 1) PLANAR 2 DOF  (z, z)
     # # -------------------------------------------------
     # "dof2_planar": sp.Matrix([
@@ -780,7 +781,20 @@ def get_robot_fkin_expr(name: str, vars, sin_hat_list=[], cos_hat_list=[]):
     #     L0*sp.sin(t1) + L1*sp.sin(t1 + t2) 
     # ])
 
-    return models[name]
+    p_vec = models[name]
+
+    # If no cameras passed, return world position p_vec (3x1)
+    if cameras is None:
+        return p_vec
+
+    # If cameras passed, return stacked image coords: (2,) or (4,)
+    uvs = []
+    for cam in cameras:
+        uv = cam.projectpoint(p_vec)   # 2x1 sympy
+        uvs.append(uv)
+    return sp.Matrix.vstack(*uvs)
+
+ 
 
 def _additive_terms(expr):
     """Return (terms_list, expanded_expr) where expanded_expr is trig-expanded."""
@@ -948,6 +962,18 @@ def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name,
 
     return results
 
+def split_uv(stacked_uv: np.ndarray):
+    """
+    stacked_uv: (T,2) for 1 cam OR (T,4) for 2 cams (u1,v1,u2,v2)
+    Returns: list of arrays, each (T,2)
+    """
+    stacked_uv = np.asarray(stacked_uv)
+    if stacked_uv.shape[1] == 2:
+        return [stacked_uv]
+    if stacked_uv.shape[1] == 4:
+        return [stacked_uv[:, 0:2], stacked_uv[:, 2:4]]
+    raise ValueError(f"Expected 2 or 4 columns, got {stacked_uv.shape[1]}")
+
 def plot_convergence_results(results):
     """Plot results from evaluate_joint_space."""
     dim = len(results[0]["q_star"])
@@ -958,139 +984,34 @@ def plot_convergence_results(results):
     errors = np.array([r["final_error"] for r in results])
     converged = np.array([r["converged"] for r in results])
 
-    if dim == 0:
+    # Plot the FK shape in IMAGE SPACE (u,v)
+    x_stars_list = split_uv(x_stars)
+    x_hat_list   = split_uv(x_hat_stars)
+
+    if len(x_stars_list) == 1:
         plt.figure()
-
-        sc = plt.scatter(
-            q_stars[:, 0],
-            q_stars[:, 1],
-            c=errors,
-            cmap="viridis"
-        )
-        # mask = converged
-
-        # plt.scatter(
-        #     q_stars[~mask, 0],
-        #     q_stars[~mask, 1],
-        #     c="red",
-        #     marker="x",
-        #     label="Did not converge"
-        # )
-
-        # sc = plt.scatter(
-        #     q_stars[mask, 0],
-        #     q_stars[mask, 1],
-        #     c=errors[mask],
-        #     cmap="viridis",
-        #     label="Converged"
-        # )
-
-        plt.scatter(
-            q0[0][0],
-            q0[0][1],
-            c="black",
-            s=200,
-            marker="o",
-            edgecolors="white",
-            linewidths=1.5,
-            label="Initial q0",
-            zorder=10
-        )
-
-        plt.colorbar(sc, label="Final error")
-        plt.xlabel("q_star[0]")
-        plt.ylabel("q_star[1]")
-        plt.title("Convergence across joint space (color by final error)")
+        plt.scatter(x_stars_list[0][:, 0], x_stars_list[0][:, 1], c="black", label="s* true")
+        plt.scatter(x_hat_list[0][:, 0],   x_hat_list[0][:, 1],   c="orange", label="ŝ* model")
+        plt.xlabel("u (pixels)")
+        plt.ylabel("v (pixels)")
+        plt.title("Forward map samples in image space (1 camera)")
         plt.grid(True)
+        plt.legend()
         plt.show()
 
-        #then plot the forward kinematics shape: plot x_star in the world coordinate space x and y
-        plt.figure()
-        plt.scatter(x_stars[:, 0], x_stars[:, 1], c="black", label="x_star true (TRUE)")
-        plt.scatter(x_hat_stars[:, 0], x_hat_stars[:, 1], c="orange", label="x_hat_star (MODEL)")
-        plt.xlabel("x coordinate")
-        plt.ylabel("y coordinate")
-        plt.title("Forward Kinematics Shape in World Space")
-        plt.grid(True)
+    elif len(x_stars_list) == 2:
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        for i, ax in enumerate(axes):
+            ax.scatter(x_stars_list[i][:, 0], x_stars_list[i][:, 1], c="black", label="s* true")
+            ax.scatter(x_hat_list[i][:, 0],   x_hat_list[i][:, 1],   c="orange", label="ŝ* model")
+            ax.set_xlabel("u (pixels)")
+            ax.set_ylabel("v (pixels)")
+            ax.set_title(f"Camera {i+1}")
+            ax.grid(True)
+            ax.legend()
+        fig.suptitle("Forward map samples in image space (2 cameras)")
+        plt.tight_layout()
         plt.show()
-
-
-
-    elif dim == 3 or dim==2:
-        q0 = np.array(results[0]["q0"])  # shape (3,)
-        q0 = np.array(results[0]["q0"]).reshape(-1)
-        q_stars = np.array(q_stars)
-
-        # If 2D, pad a zero z-coordinate
-        if q0.size == 2:
-            q0 = np.append(q0, 0.0)
-            q_stars = np.hstack([q_stars, np.zeros((q_stars.shape[0], 1))])
-            q_stars = np.hstack([q_stars, np.zeros((q_stars.shape[0], 1))])
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection="3d")
-
-        # sc = ax.scatter(
-        #     q_stars[:, 0],
-        #     q_stars[:, 1],
-        #     q_stars[:, 2],
-        #     c=errors,
-        #     cmap="viridis"
-        # )
-
-
-        ax.scatter(
-            q0[0],
-            q0[1],
-            q0[2],
-            c="black",
-            s=200,
-            marker="o",
-            edgecolors="white",
-            linewidths=1.5,
-            label="Initial q0"
-        )
-
-        mask = converged
-
-        ax.scatter(
-            q_stars[~mask, 0],
-            q_stars[~mask, 1],
-            q_stars[~mask, 2],
-            c="red",
-            marker="x",
-            label="Did not converge"
-        )
-
-        sc = ax.scatter(
-            q_stars[mask, 0],
-            q_stars[mask, 1],
-            q_stars[mask, 2],
-
-            c=errors[mask],
-            cmap="viridis",
-            label="Converged"
-        )
-
-
-        fig.colorbar(sc, ax=ax, label="Final error")
-        ax.set_xlabel("q_star[0]")
-        ax.set_ylabel("q_star[1]")
-        ax.set_zlabel("q_star[2]")
-        ax.set_title("Convergence across joint space (color by final error)")
-        ax.grid(True)
-        plt.show()
-
-        #then plot the forward kinematics shape: plot x_star in the world coordinate space x y z
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection="3d")
-        ax.scatter(x_stars[:, 0], x_stars[:, 1], x_stars[:, 2], c="black", label="x_star true")
-        ax.scatter(x_hat_stars[:, 0], x_hat_stars[:, 1], x_hat_stars[:, 2], c="orange", label="x_star")
-        ax.set_xlabel("x coordinate")
-        ax.set_ylabel("y coordinate")
-        ax.set_zlabel("z coordinate")
-        ax.set_title("Forward Kinematics Shape in World Space")
-        ax.grid(True)
-        plt.show()  
 
 
 def get_best_model_main(name):
@@ -1163,9 +1084,9 @@ def get_best_model_main(name):
 
 
 # get_best_model_main(name='dof2_planar')
-valid_jacobian_perturbation_bounds_main()
+# valid_jacobian_perturbation_bounds_main()
 # main()
-# eval_joint_space_main()
+eval_joint_space_main()
 
 # def script(sin_list, cos_list, vars):
 #     rotation_matrix = get_robot_rotation_matrix(sin_hat=sin_list, cos_hat=cos_list, vars)
