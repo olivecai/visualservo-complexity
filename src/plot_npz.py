@@ -17,4 +17,5 @@ def plot_npz_overlapping(filenames):
     plt.show()
 
 # plot_npz_overlapping(['jacobian_perturbation_results_dof2_alt.npz','jacobian_perturbation_results_dof3_alt.npz','jacobian_perturbation_results_dof2_planar.npz','jacobian_perturbation_results_dof3_planar.npz'])
-plot_npz_overlapping(['jacobian_perturbation_results_dof2_alt_vs.npz','jacobian_perturbation_results_dof3_alt_vs.npz','jacobian_perturbation_results_dof2_planar_vs.npz','jacobian_perturbation_results_dof3_planar_vs.npz'])
+# plot_npz_overlapping(['jacobian_perturbation_results_dof2_alt_vs.npz','jacobian_perturbation_results_dof3_alt_vs.npz','jacobian_perturbation_results_dof2_planar_vs.npz','jacobian_perturbation_results_dof3_planar_vs.npz'])
+plot_npz_overlapping(['jacobian_perturbation_results_dof2_alt_vs_additive_eps_signed.npz','jacobian_perturbation_results_dof3_alt_vs_additive_eps_signed.npz','jacobian_perturbation_results_dof2_planar_vs_additive_eps_signed.npz','jacobian_perturbation_results_dof3_planar_vs_additive_eps_signed.npz'])

@@ -44,15 +44,29 @@ create a newton method function to solve visual servoing for some target in some
 
 import numpy as np
 import sympy as sp
+import matplotlib
+matplotlib.use("TkAgg")
 import matplotlib.pylab as plt
 import argparse
 
+
 pi=np.pi
+sin = sp.sin
+cos = sp.cos
+sqrt = sp.sqrt
+JOINT_RANGE=(pi/6, pi/2)
+small_extra_range=pi/12
+# lower=(pi/6)-2*(pi/2)-(pi/12), upper=3*(pi/2)+(pi/12)
+LOWER_SINUSOID = JOINT_RANGE[0] - 2* JOINT_RANGE[1] - small_extra_range
+UPPER_SINUSOID = JOINT_RANGE[1] * 3 + small_extra_range
+
 
 from robot_toolbox.camera import Camera
 
-cam1 = Camera(sp.pi,sp.pi/16,-sp.pi/2,[-1,0,5], 5,5, 0, 0) 
-cam2 = Camera(sp.pi+sp.pi/16, sp.pi/16, -sp.pi/2, [-1,-1,5], 5,5,0,0) 
+# cam1 = Camera(sp.pi,sp.pi/16,-sp.pi/2,[-1,0,5], 5,5, 0, 0) 
+# cam2 = Camera(sp.pi+sp.pi/16, sp.pi/16, -sp.pi/2, [-1,-1,5], 5,5,0,0) 
+cam1 = Camera(sp.pi, sp.pi/16,-sp.pi/2,[-1,0,5], 5,5, 0, 0) 
+cam2 = Camera(sp.pi, (sp.pi/4), -sp.pi/2, [-5,0,5], 5,5,0,0) 
 cams=[cam1,cam2]
 
 
@@ -268,26 +282,9 @@ def plot_spectral_norm_history(sig_ct, sig_cm, sig_nt, sig_nm):
 def get_p_and_p_true(sin_list, cos_list, vars, robot_name,cameras=[cam1,cam2]):
     # --- build symbolic FK (4x4) using your rotation-matrix chain
     T_true = get_robot_fkin_expr(name=robot_name, vars=vars, cameras=cameras)
+    T = get_vs_fkin_expr(name=robot_name, vars=vars, sin_hat_list=sin_list, cos_hat_list=cos_list, cameras=cameras)
+    print(f"T:{T}, T_true:{T_true}")
     #T_true is in symbolic form, so directly substitute in the cos=cos_list[0] and sin=sin_list[0] to get the piecewise approximation of the true FK, which we will use for the Jacobian and visual servoing, but we will still use the true FK for the position and target definition
-    expr = T_true
-    print(T_true)
-
-    trig_terms = set()
-    for e in expr.atoms(sp.sin, sp.cos):
-        trig_terms.add(e)
-
-    subs_map = {}
-    for t in trig_terms:
-        arg = t.args[0]
-        if isinstance(t, sp.sin):
-            subs_map[t] = sin_list[0](arg)
-        else:
-            subs_map[t] = cos_list[0](arg)
-
-    T = expr.subs(subs_map)
-    print(T)
-    print("^ MODEL T FROM SUBS ")
-    
     # T = get_robot_rotation_matrix(name=robot_name, sin_hat=sin_list, cos_hat=cos_list, vars=vars)
     # --- end-effector position = translation column
     # p = sp.Matrix([T[0, 3], T[1, 3], T[2, 3]])         # 3x1
@@ -370,8 +367,18 @@ def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3, chord
 
 def get_perturbed_jacobian(J, eps_max):
     ''' Given a Jacobian matrix J, return a perturbed version of J where each element is independently scaled by a random factor in the range [1, eps_max]. This simulates the effect of approximation errors in the Jacobian. '''
-    m_eps = np.random.uniform(1,eps_max, size=J.shape)
-    return J * m_eps
+    J = np.array(J, dtype=float)
+
+    scale = np.max(np.abs(J)) #normalize!!!
+    if scale == 0:
+        scale = 1.0
+
+    J_norm = J / scale
+
+    perturb = np.random.uniform(0, eps_max, J_norm.shape)
+    J_perturbed = J_norm + perturb
+
+    return J_perturbed * scale
 
 def valid_jacobian_perturbation_bounds_main():
     '''for a given maximum error scaling epsilon_limit, generate a scaling matrix m_eps where each element is sampled independently with m_eps_i_j ~ uniform(1,eps_limit). 
@@ -381,13 +388,13 @@ def valid_jacobian_perturbation_bounds_main():
     '''
     # dof = 3
     # planar=0
-    for dof in [2,3]:
-        for planar in [0,1]:
+    for dof in [2, 3]:
+        for planar in [0, 1]:
 
             structure_type = "planar" if planar else "alt"
             vars = sp.symbols(f"q0:{dof}", real=True)
             robot_name = f"dof{dof}_{structure_type}"
-            joint_ranges = [(pi/5, pi/2)] * dof
+            joint_ranges = [(pi/6, pi/2)] * dof
 
             tol=1e-1
 
@@ -397,10 +404,10 @@ def valid_jacobian_perturbation_bounds_main():
 
             chord_flag=False
 
-            eps_lim_values = np.linspace(-1.5, 3, 100)  # 46 values from -1.5 to 3 in steps of 0.1
+            eps_lim_values = np.linspace(-3, 3, 100)  # 46 values from -1.5 to 3 in steps of 0.1
             results = []
 
-            p,p_true = get_p_and_p_true(sin_list_true, cos_list_true, vars, robot_name, cameras=cams) # get p and p_true once to reuse across runs
+            p_true = get_robot_fkin_expr(name=robot_name,vars=vars, cameras=[cam1, cam2])
             for eps in eps_lim_values:
                 #make q0 and q_star random within jointn lim:
                 q0 = np.random.uniform(joint_ranges[0][0], joint_ranges[0][1], size=dof)
@@ -408,7 +415,7 @@ def valid_jacobian_perturbation_bounds_main():
                     # --- damped pseudo-inverse Jacobian (stable)
                 runs=[]
                 for run in range(50):
-                    runs.append(script(sin_list_true, cos_list_true, vars, robot_name, q0, q_star, damping=1e-3, chord_newton=chord_flag, jacobian_eps_max=eps,p=p,p_true=p_true, tol=tol))
+                    runs.append(script(sin_list_true, cos_list_true, vars, robot_name, q0, q_star, damping=1e-3, chord_newton=chord_flag, jacobian_eps_max=eps,p=p_true,p_true=p_true, tol=tol))
                 avg=np.mean([r["e_hist"][-1] for r in runs])
                 print(f"eps_lim: {eps:.2f}, avg final error: {avg:.4f}")
                 results.append(avg)
@@ -424,35 +431,58 @@ def valid_jacobian_perturbation_bounds_main():
             # plt.show()
 
             # save the results with np 
-            np.savez(f"jacobian_perturbation_results_{robot_name}_vs.npz", eps_lim_values=eps_lim_values, convergence_errors=convergence_errors)
+            np.savez(f"jacobian_perturbation_results_{robot_name}_vs_additive_eps_signed.npz", eps_lim_values=eps_lim_values, convergence_errors=convergence_errors)
 
             
 
+def PLOT_using_chord_for_convergence_true_real():
+    ''' plot over joint space using chord method and the real world true model'''
+    dof = 3
+    planar=0
+    structure_type = "planar" if planar else "alt"
+    vars = sp.symbols(f"q0:{3}", real=True)
+    robot_name = f"dof{dof}_{structure_type}"
+    joint_ranges = [JOINT_RANGE] * dof
+
+
+    q0     = np.array([pi/5, pi/3, pi/3][:dof], dtype=float)
+    q_star = np.array([pi/5, pi/2, pi/4][:dof], dtype=float)
+    
+
+    p_true=get_robot_fkin_expr(robot_name, vars=vars, cameras=None)
+    print(f"p_true: {p_true}")
+    p = p_true
+    print(f"p: {p}")
+    real_p_true_fn = get_robot_fkin_expr(robot_name, vars, sin_hat_list=[], cos_hat_list=[], cameras=None)
+    print("real_p_true_fn:", real_p_true_fn)
+    results = evaluate_joint_space(joint_ranges, sin_list=[sin]*10, cos_list=[cos]*10, q0=q0, vars=vars, robot_name=robot_name, p=p,p_true=p_true, chord_newton=True)
+    print("RESULTS:\n",results)
+    plot_convergence_results_not_vs(results)
+
+
+
 
 def eval_joint_space_main():
-    dof = 2
-    planar=1
+    dof = 3
+    planar=0
     structure_type = "planar" if planar else "alt"
-    vars = sp.symbols(f"q0:{dof}", real=True)
+    vars = sp.symbols(f"q0:{3}", real=True)
     robot_name = f"dof{dof}_{structure_type}"
-    joint_ranges = [(pi/6, pi/2)] * dof
+    joint_ranges = [JOINT_RANGE] * dof
+
+    planar_combinations = get_robot_possible_linear_model_combinations(name=robot_name)
+    sin_list_hat,cos_list_hat = planar_combinations[1]
+    sin_list_hat.append(sin) #this is just here to not break indexing but it seriously doesnt affect anything
+    cos_list_hat.append(cos) #same as above comment!
+
 
     q0     = np.array([pi/4, pi/4, pi/3][:dof], dtype=float)
     q_star = np.array([pi/5, pi/2, pi/4][:dof], dtype=float)
 
-    # --- build piecewise trig lists once
-    sin_list_hat = []
-    cos_list_hat = []
-    for _ in range(dof):
-        sin_knots = np.linspace(-2*pi, 2*pi, 15)
-        cos_knots = np.linspace(-2*pi, 2*pi, 15)
-        sin_list_hat.append(create_piecewise_sinusoid(sp.sin, sin_knots))
-        cos_list_hat.append(create_piecewise_sinusoid(sp.cos, cos_knots))
-
-        x = sp.symbols('x')
+    x = sp.symbols('x')
     expr = sin_list_hat[0](x)
     f = sp.lambdify(x, expr, "numpy")
-    xs = np.linspace(-2*np.pi, 2*np.pi, 1000)
+    xs = np.linspace(LOWER_SINUSOID, UPPER_SINUSOID, 500)
     ys = f(xs)
 
     plt.plot(xs, ys)
@@ -462,15 +492,21 @@ def eval_joint_space_main():
     x = sp.symbols('x')
     expr = cos_list_hat[0](x)
     f = sp.lambdify(x, expr, "numpy")
-    xs = np.linspace(-2*np.pi, 2*np.pi, 1000)
+    xs = np.linspace(LOWER_SINUSOID, UPPER_SINUSOID, 500)
     ys = f(xs)
 
     plt.plot(xs, ys)
     plt.ylim(-2, 2)
     plt.show()
 
-    results = evaluate_joint_space(joint_ranges, sin_list_hat, cos_list_hat, q0, vars, robot_name)
-    plot_convergence_results(results)
+    p_true=get_robot_fkin_expr(robot_name, vars=vars, cameras=[cam1,cam2])
+    print(f"p_true: {p_true}")
+    p = get_vs_fkin_expr(robot_name, vars, sin_hat_list=sin_list_hat, cos_hat_list=cos_list_hat)
+    print(f"p: {p}")
+    real_p_true_fn = get_robot_fkin_expr(robot_name, vars, sin_hat_list=[], cos_hat_list=[], cameras=None)
+    print("real_p_true_fn:", real_p_true_fn)
+    results = evaluate_joint_space(joint_ranges, sin_list_hat, cos_list_hat, q0, vars, robot_name, p=p,p_true=p_true)
+    plot_convergence_results(results, real_p_true_fn=real_p_true_fn)
 
 # --------------------------
 # main (updated: run 4 cases + CLI flag for chord/newton)
@@ -496,17 +532,22 @@ def main():
     robot_name = f"dof{dof}_{structure_type}"
     joint_ranges = [(pi/6, pi/2)] * dof
 
-    q0     = np.array([pi/4, pi/4, pi/3][:dof], dtype=float)
+    q0     = np.array([pi/4, pi/3, pi/3][:dof], dtype=float)
     q_star = np.array([pi/5, pi/2, pi/4][:dof], dtype=float)
 
     # --- build piecewise trig lists once
     sin_list_hat = []
     cos_list_hat = []
-    for _ in range(dof):
-        sin_knots = np.linspace(-2*pi, 2*pi, 15)
-        cos_knots = np.linspace(-2*pi, 2*pi, 15)
-        sin_list_hat.append(create_piecewise_sinusoid(sp.sin, sin_knots))
-        cos_list_hat.append(create_piecewise_sinusoid(sp.cos, cos_knots))
+    # for _ in range(dof): #### OUTDATED since now we have the handmade linear combos
+    #     sin_knots = np.linspace(-2*pi, 2*pi, 15)
+    #     cos_knots = np.linspace(-2*pi, 2*pi, 15)
+    #     sin_list_hat.append(create_piecewise_sinusoid(sp.sin, sin_knots))
+    #     cos_list_hat.append(create_piecewise_sinusoid(sp.cos, cos_knots))
+    planar_combinations = get_robot_possible_linear_model_combinations(name=robot_name)
+    sin_list_hat,cos_list_hat = planar_combinations[1]
+    sin_list_hat.append(sin) #this is just here to not break indexing but it seriously doesnt affect anything
+    cos_list_hat.append(cos) #same as above comment!
+
 
     sin_list_true = [sp.sin] * dof
     cos_list_true = [sp.cos] * dof
@@ -584,7 +625,7 @@ def main():
     print(f"Newton True:  iters={out_nt['iters']}, final ||e||={e_nt[-1]}")
     print(f"Newton Model: iters={out_nm['iters']}, final ||e||={e_nm[-1]}")
 
-def get_robot_possible_linear_model_combinations(name:str='dof2_planar', lower=(pi/6)-2*(pi/2)-(pi/12), upper=3*(pi/2)+(pi/12)):
+def get_robot_possible_linear_model_combinations(name:str='dof2_planar', lower=LOWER_SINUSOID, upper=UPPER_SINUSOID):
     '''>>> (pi/6)-2*(pi/2)
     -2.6179938779914944
     >>> 3*pi/2
@@ -603,7 +644,7 @@ def get_robot_possible_linear_model_combinations(name:str='dof2_planar', lower=(
   
     sin_knots_A = [lower, -1.57079633, 1.57079633,  upper]
     sin_knots_B = [lower, -2.0943951 , -1.04719755, 1.04719755,  2.0943951,   4.1887902 ,  upper]
-    sin_knots_C = [lower -2.35619449, -1.57079633, -0.78539816, 0.78539816, 1.57079633,  2.35619449,    3.92699082, upper]
+    sin_knots_C = [lower, -2.35619449, -1.57079633, -0.78539816, 0.78539816, 1.57079633,  2.35619449,    3.92699082, upper]
     sin_knots_D=[lower, -2.51327412, -1.88495559, -1.25663706, -0.62831853, 0.62831853,  1.25663706,  1.88495559,  2.51327412,  3.76991118,  4.39822972, upper]
     sin_hat_A =create_piecewise_sinusoid(sp.sin, sin_knots_A)
     sin_hat_B= create_piecewise_sinusoid(sp.sin, sin_knots_B)
@@ -634,29 +675,178 @@ def get_robot_possible_linear_model_combinations(name:str='dof2_planar', lower=(
     models={"dof2_planar": [[[sin_hat_A, sin_hat_A], [cos_hat_A, cos_hat_A]], 
                             [[sin_hat_B, sin_hat_B], [cos_hat_B, cos_hat_B]],
                            [ [sin_hat_C, sin_hat_C], [cos_hat_C, cos_hat_C]],
-                           [ [sin_hat_D, sin_hat_D], [cos_hat_D, cos_hat_D]],
-                           [ [sin_hat_A, sin_hat_B], [cos_hat_A, cos_hat_B]],
-                          [  [sin_hat_A, sin_hat_C], [cos_hat_A, cos_hat_C]],
-                          [  [sin_hat_A, sin_hat_D], [cos_hat_A, cos_hat_D]],
-                            [[sin_hat_B, sin_hat_A], [cos_hat_B, cos_hat_A]],
-                            [[sin_hat_B, sin_hat_C], [cos_hat_B, cos_hat_C]],
-                          [  [sin_hat_B, sin_hat_D], [cos_hat_B, cos_hat_D]],
-                           [ [sin_hat_C, sin_hat_A], [cos_hat_C, cos_hat_A]],
-                           [ [sin_hat_C, sin_hat_B], [cos_hat_C, cos_hat_B]],
-                           [ [sin_hat_C, sin_hat_D], [cos_hat_C, cos_hat_D]],
-                           [ [sin_hat_D, sin_hat_A], [cos_hat_D, cos_hat_A]],
-                            [[sin_hat_D, sin_hat_B], [cos_hat_D, cos_hat_B]],
-                           [ [sin_hat_D, sin_hat_C], [cos_hat_D, cos_hat_C]]],
+                           [ [sin_hat_D, sin_hat_D], [cos_hat_D, cos_hat_D]]],
+                        #    [ [sin_hat_A, sin_hat_B], [cos_hat_A, cos_hat_B]],
+                        #   [  [sin_hat_A, sin_hat_C], [cos_hat_A, cos_hat_C]],
+                        #   [  [sin_hat_A, sin_hat_D], [cos_hat_A, cos_hat_D]],
+                        #     [[sin_hat_B, sin_hat_A], [cos_hat_B, cos_hat_A]],
+                        #     [[sin_hat_B, sin_hat_C], [cos_hat_B, cos_hat_C]],
+                        #   [  [sin_hat_B, sin_hat_D], [cos_hat_B, cos_hat_D]],
+                        #    [ [sin_hat_C, sin_hat_A], [cos_hat_C, cos_hat_A]],
+                        #    [ [sin_hat_C, sin_hat_B], [cos_hat_C, cos_hat_B]],
+                        #    [ [sin_hat_C, sin_hat_D], [cos_hat_C, cos_hat_D]],
+                        #    [ [sin_hat_D, sin_hat_A], [cos_hat_D, cos_hat_A]],
+                        #     [[sin_hat_D, sin_hat_B], [cos_hat_D, cos_hat_B]],
+                        #    [ [sin_hat_D, sin_hat_C], [cos_hat_D, cos_hat_C]]],
 
-            "dof2_alt": [[]],
-    "dof3_planar":[],
-    "dof3_alt":[]}
+            "dof2_alt": [[[sin_hat_A]*3, [cos_hat_A]*3],
+                         [[sin_hat_B]*3, [cos_hat_B]*3],
+                         [[sin_hat_C]*3, [cos_hat_C]*3],
+                         [[sin_hat_D]*3, [cos_hat_D]*3]],
+    "dof3_planar":[[[sin_hat_A]*3, [cos_hat_A]*3],
+                         [[sin_hat_B]*3, [cos_hat_B]*3],
+                         [[sin_hat_C]*3, [cos_hat_C]*3],
+                         [[sin_hat_D]*3, [cos_hat_D]*3]],
+    "dof3_alt":[[[sin_hat_A]*3, [cos_hat_A]*3],
+                         [[sin_hat_B]*3, [cos_hat_B]*3],
+                         [[sin_hat_C]*3, [cos_hat_C]*3],
+                         [[sin_hat_D]*3, [cos_hat_D]*3]]}
 
 
     return models[name]
 
+def get_count_of_linear_pieces():
+    ''' a hardcoded function just for storage and  my own convenience, not to be used in scripts'''    
+    sA = 3
+    cA = 3
+    sB = 6
+    cB = 5
+    sC = 8
+    cC = 8
+    sD = 11
+    cD = 10
+
+    s0 = s1 = s2 = sD
+    c0 = c1 = c2 = cD
+
+    # how many parameters do we actually need to measure for each model ==> how many parameters for each line, then how many lines?
+    one = 2 # mx+b
+    two = 3 #mx +my + b
+    three = 4 #mx + my  +mz + b
+
+    dof3_alt = s1*two + s1*two + s2*three + s2*three + s0*one + s1*two + c1*two + c1*two + c2*three + c2*three
+    dof3_planar = s0*one + s1*two + s2*three + c0*one + c1*two + c2*three
+    dof2_alt = s0*one + s1*two + s1*two + c0*one + c1*two + c1*two + s1*one
+    dof2_planar = s0*one + s1*two + c0*one + c1*two 
+
+    #now this should be the proper count of how many 
+    print(dof2_alt)
+    print(dof2_planar)
+    print(dof3_alt)
+    print(dof3_planar)
+
+    ''' jotnotes
+    (NOT CAMERA PROJECTION. if camera projection then just multiply each count by TWO)
+    ---      
+    s0 = s1 = s2 = sA
+    c0 = c1 = c2 = cA
+    dof2_alt, dof2_planar, dof3_alt, dof3_planar = 21, 12, 30, 18
+
+     ---      
+    s0 = s1 = s2 = sB
+    c0 = c1 = c2 = cB
+    dof2_alt, dof2_planar, dof3_alt, dof3_planar = 39, 22, 56, 33
+
+     ---      
+    s0 = s1 = s2 = sC
+    c0 = c1 = c2 = cC
+    dof2_alt, dof2_planar, dof3_alt, dof3_planar = 56, 32, 80, 48
+
+         ---      
+    s0 = s1 = s2 = sD
+    c0 = c1 = c2 = cD
+    dof2_alt, dof2_planar, dof3_alt, dof3_planar = 74, 42, 106, 63
+
+    '''
+
+
+def get_vs_fkin_expr(name:str, vars, sin_hat_list=[sin]*4, cos_hat_list=[cos]*4, cameras=[cam1,cam2]):
+    ''' to get vs model with constant depth '''
+    try:
+        t0,t1,t2 = vars[0],vars[1],vars[2]
+        sin_hat_list[2]
+    except:
+        t0,t1,t2= vars[0],vars[1],0
+        sin_hat_list.append(sin)
+        cos_hat_list.append(cos)
+        
+    #later can add to choose a specific camera but for now lets just do both cam1 and cam2
+
+    dof2_planar_cam1 = sp.Matrix([[0.978142303813579*sin_hat_list[0](t0) + 0.978142303813579*sin_hat_list[1](t0 + t1)], [0.195628460762716*(5*cos_hat_list[0](t0) + 5*cos_hat_list[1](t0 + t1))*cos(pi/16) - 4.89071151906789*sin(pi/16) + 0.978142303813579*cos(pi/16)]])
+    # s0 + s1 + c0 + c1 
+
+    dof2_planar_cam2 = sp.Matrix([[0.702528441024851*sin_hat_list[0](t0) + 0.702528441024851*sin_hat_list[1](t0 + t1)], [0.351264220512425*sqrt(2)*(cos_hat_list[0](t0) + cos_hat_list[1](t0 + t1))]])
+    # s0 + s1 + c0 + c1
+
+    dof3_planar_cam1 = sp.Matrix([[1.00224812250043*sin_hat_list[0](t0) + 1.00224812250043*sin_hat_list[1](t0 + t1) + 1.00224812250043*sin_hat_list[2](t0 + t1 + t2)], [0.200449624500085*(5*cos_hat_list[0](t0) + 5*cos_hat_list[1](t0 + t1) + 5*cos_hat_list[2](t0 + t1 + t2))*cos(pi/16) - 5.01124061250214*sin(pi/16) + 1.00224812250043*cos(pi/16)]])
+    # s0 + s1 + s2 + c0 + c1 + c2
+
+    dof3_planar_cam2 = sp.Matrix([[0.749453228499139*sin_hat_list[0](t0) + 0.749453228499139*sin_hat_list[1](t0 + t1) + 0.749453228499139*sin_hat_list[2](t0 + t1 + t2)], [0.374726614249569*sqrt(2)*(cos_hat_list[0](t0) + cos_hat_list[1](t0 + t1) + cos_hat_list[2](t0 + t1 + t2))]])
+    # s0 + s1 + s2 + c0 + c1 + c2
+
+    dof2_alt_cam1 = sp.Matrix([[1.12635211389101*sin_hat_list[0](t0) + 0.563176056945505*sin_hat_list[1](t0 - t1) + 0.563176056945505*sin_hat_list[1](t0 + t1)], [0.225270422778202*(5*cos_hat_list[0](t0) + 2.5*cos_hat_list[1](t0 - t1) + 2.5*cos_hat_list[1](t0 + t1))*cos(pi/16) + 1.12635211389101*sin(pi/16)*sin_hat_list[1](t1) - 5.63176056945505*sin(pi/16) + 1.12635211389101*cos(pi/16)]])
+    # s0 + s1 + s1 + c0 + c1 + c1 + s1
+
+    dof2_alt_cam2 = sp.Matrix([[0.711026177453064*sin_hat_list[0](t0) + 0.355513088726532*sin_hat_list[1](t0 - t1) + 0.355513088726532*sin_hat_list[1](t0 + t1)], [0.355513088726532*sqrt(2)*(cos_hat_list[0](t0) + 0.5*cos_hat_list[1](t0 - t1) + 0.5*cos_hat_list[1](t0 + t1)) + 0.355513088726532*sqrt(2)*sin_hat_list[1](t1)]])
+    # s0 + s1 + s1 + c0 + c1 + c1 + s1
+
+    dof3_alt_cam1 = sp.Matrix([[0.688425842080919*sin_hat_list[1](t0 - t1) + 0.688425842080919*sin_hat_list[1](t0 + t1) - 0.688425842080919*sin_hat_list[2](-t0 + t1 + t2) + 0.688425842080919*sin_hat_list[2](t0 + t1 + t2)], [0.275370336832368*(5*sin_hat_list[0](t1) + 5*sin_hat_list[1](t1 + t2))*sin(pi/16) + 0.275370336832368*(2.5*cos_hat_list[1](t0 - t1) + 2.5*cos_hat_list[1](t0 + t1) + 2.5*cos_hat_list[2](-t0 + t1 + t2) + 2.5*cos_hat_list[2](t0 + t1 + t2))*cos(pi/16) - 6.88425842080919*sin(pi/16) + 1.37685168416184*cos(pi/16)]])
+    # s1 + s1 + s2 + s2 + s0 + s1 + c1 + c1 + c2 + c2
+
+    dof3_alt_cam2 = sp.Matrix([[0.407416750844502*sin_hat_list[1](t0 - t1) + 0.407416750844502*sin_hat_list[1](t0 + t1) - 0.407416750844502*sin_hat_list[2](-t0 + t1 + t2) + 0.407416750844502*sin_hat_list[2](t0 + t1 + t2)], [0.407416750844502*sqrt(2)*(sin_hat_list[0](t1) + sin_hat_list[1](t1 + t2)) + 0.407416750844502*sqrt(2)*(0.5*cos_hat_list[1](t0 - t1) + 0.5*cos_hat_list[1](t0 + t1) + 0.5*cos_hat_list[2](-t0 + t1 + t2) + 0.5*cos_hat_list[2](t0 + t1 + t2))]])
+    # s1 + s1 + s2 + s2 + s0 + s1 + c1 + c1 + c2 + c2
+
+
+    expr_map = {
+        "dof2_planar_cam1": dof2_planar_cam1,
+        "dof2_planar_cam2": dof2_planar_cam2,
+        "dof3_planar_cam1": dof3_planar_cam1,
+        "dof3_planar_cam2": dof3_planar_cam2,
+        "dof2_alt_cam1": dof2_alt_cam1,
+        "dof2_alt_cam2": dof2_alt_cam2,
+        "dof3_alt_cam1": dof3_alt_cam1,
+        "dof3_alt_cam2": dof3_alt_cam2,
+
+        "dof2_planar": sp.Matrix.vstack(dof2_planar_cam1, dof2_planar_cam2),
+        "dof3_planar": sp.Matrix.vstack(dof3_planar_cam1, dof3_planar_cam2),
+        "dof2_alt": sp.Matrix.vstack(dof2_alt_cam1, dof2_alt_cam2),
+        "dof3_alt": sp.Matrix.vstack(dof3_alt_cam1, dof3_alt_cam2),
+    }
+
+    if name not in expr_map:
+        valid = ", ".join(expr_map.keys())
+        raise ValueError(f"Unknown name '{name}'. Valid options are: {valid}")
+    
+    # how many linear pieces created?
+    '''
+    for dof2,
+    
+    '''
+
+    return expr_map[name]
+        
+    # dof2_planar_cam1 = sp.Matrix([[0.978142303813579*sin(t0) + 0.978142303813579*sin(t0 + t1)], [0.195628460762716*(5*cos(t0) + 5*cos(t0 + t1))*cos(pi/16) - 4.89071151906789*sin(pi/16) + 0.978142303813579*cos(pi/16)]])
+
+    # dof2_planar_cam2 = sp.Matrix([[0.702528441024851*sin(t0) + 0.702528441024851*sin(t0 + t1)], [0.351264220512425*sqrt(2)*(cos(t0) + cos(t0 + t1))]])
+
+    # dof3_planar_cam1 = sp.Matrix([[1.00224812250043*sin(t0) + 1.00224812250043*sin(t0 + t1) + 1.00224812250043*sin(t0 + t1 + t2)], [0.200449624500085*(5*cos(t0) + 5*cos(t0 + t1) + 5*cos(t0 + t1 + t2))*cos(pi/16) - 5.01124061250214*sin(pi/16) + 1.00224812250043*cos(pi/16)]])
+
+    # dof3_planar_cam2 = sp.Matrix([[0.749453228499139*sin(t0) + 0.749453228499139*sin(t0 + t1) + 0.749453228499139*sin(t0 + t1 + t2)], [0.374726614249569*sqrt(2)*(cos(t0) + cos(t0 + t1) + cos(t0 + t1 + t2))]])
+
+    # dof2_alt_cam1 = sp.Matrix([[1.12635211389101*sin(t0) + 0.563176056945505*sin(t0 - t1) + 0.563176056945505*sin(t0 + t1)], [0.225270422778202*(5*cos(t0) + 2.5*cos(t0 - t1) + 2.5*cos(t0 + t1))*cos(pi/16) + 1.12635211389101*sin(pi/16)*sin(t1) - 5.63176056945505*sin(pi/16) + 1.12635211389101*cos(pi/16)]])
+
+    # dof2_alt_cam2 = sp.Matrix([[0.711026177453064*sin(t0) + 0.355513088726532*sin(t0 - t1) + 0.355513088726532*sin(t0 + t1)], [0.355513088726532*sqrt(2)*(cos(t0) + 0.5*cos(t0 - t1) + 0.5*cos(t0 + t1)) + 0.355513088726532*sqrt(2)*sin(t1)]])
+
+    # dof3_alt_cam1 = sp.Matrix([[0.688425842080919*sin(t0 - t1) + 0.688425842080919*sin(t0 + t1) - 0.688425842080919*sin(-t0 + t1 + t2) + 0.688425842080919*sin(t0 + t1 + t2)], [0.275370336832368*(5*sin(t1) + 5*sin(t1 + t2))*sin(pi/16) + 0.275370336832368*(2.5*cos(t0 - t1) + 2.5*cos(t0 + t1) + 2.5*cos(-t0 + t1 + t2) + 2.5*cos(t0 + t1 + t2))*cos(pi/16) - 6.88425842080919*sin(pi/16) + 1.37685168416184*cos(pi/16)]])
+
+    # dof3_alt_cam2 = sp.Matrix([[0.407416750844502*sin(t0 - t1) + 0.407416750844502*sin(t0 + t1) - 0.407416750844502*sin(-t0 + t1 + t2) + 0.407416750844502*sin(t0 + t1 + t2)], [0.407416750844502*sqrt(2)*(sin(t1) + sin(t1 + t2)) + 0.407416750844502*sqrt(2)*(0.5*cos(t0 - t1) + 0.5*cos(t0 + t1) + 0.5*cos(-t0 + t1 + t2) + 0.5*cos(t0 + t1 + t2))]])
+
+    return sp.Matrix.vstack(*uvs)
+
 def get_robot_fkin_expr(name: str, vars, sin_hat_list=[], cos_hat_list=[], cameras=[cam1,cam2]):
-    ''' return the fkin for dof2 planar, dof2 joint 1 rot about z axis and joint 2 rot about y axis, dof 3 planar, and dof 3 Matrix([[-x - 0.3*sin(t1)*sin(t2)*cos(t0) + 0.3*cos(t0)*cos(t1)*cos(t2) + 0.55*cos(t0)*cos(t1)], [-y - 0.3*sin(t0)*sin(t1)*sin(t2) + 0.3*sin(t0)*cos(t1)*cos(t2) + 0.55*sin(t0)*cos(t1)], [-z + 0.3*sin(t1)*cos(t2) + 0.55*sin(t1) + 0.3*sin(t2)*cos(t1)]])
+    ''' TRUE fkin, no approximations other than using sin and cos as approximations!
+    
+    return the fkin for dof2 planar, dof2 joint 1 rot about z axis and joint 2 rot about y axis, dof 3 planar, and dof 3 Matrix([[-x - 0.3*sin(t1)*sin(t2)*cos(t0) + 0.3*cos(t0)*cos(t1)*cos(t2) + 0.55*cos(t0)*cos(t1)], [-y - 0.3*sin(t0)*sin(t1)*sin(t2) + 0.3*sin(t0)*cos(t1)*cos(t2) + 0.55*sin(t0)*cos(t1)], [-z + 0.3*sin(t1)*cos(t2) + 0.55*sin(t1) + 0.3*sin(t2)*cos(t1)]])
      but all the fkin is expressed as linear combination of sin and cos. for instance instead of  cos(x)cos(y) - sin(x)sin(y) which has quadratic degree if sin and cos are repr by linear model, we can rewrite as cos(x+y) which is linear in sin and cos. This way, we can directly substitute the piecewise linear approximations of sin and cos into the fkin expression without increasing the degree of the approximation. 
      '''
     if sin_hat_list == []:
@@ -685,6 +875,7 @@ def get_robot_fkin_expr(name: str, vars, sin_hat_list=[], cos_hat_list=[], camer
         L0*sin_hat_list[0](t0) + L1*sin_hat_list[1](t0 + t1),
         0
     ]),
+    # uses c0 + c1 + s0 + s1 linear pieces
 
     # -------------------------------------------------
     # 2) 2 DOF (z then local y)
@@ -699,7 +890,7 @@ def get_robot_fkin_expr(name: str, vars, sin_hat_list=[], cos_hat_list=[], camer
 
         L1*sin_hat_list[0](t1)
     ]),
-
+    # uses c0 + c1 + c2 + s0 + s1 + s2 + s0 linear pieces
 
     # -------------------------------------------------
     # 3) PLANAR 3 DOF  (z, z, z)
@@ -715,18 +906,20 @@ def get_robot_fkin_expr(name: str, vars, sin_hat_list=[], cos_hat_list=[], camer
 
         0
     ]),
-
+    # uses c0 + c1 + c2 + s0 + s1 + s2
 
     # -------------------------------------------------
     # 4) 3 DOF (dylan)
     # -------------------------------------------------
     "dof3_alt": sp.Matrix([
-        0.5*L0*(cos_hat_list[0](t0 + t1) + cos_hat_list[1](t0 - t1))+0.5*L1*(cos_hat_list[2](t0 + t1 + t2) + cos_hat_list[3](t0 - t1 - t2)),
+        0.5*L0*(cos_hat_list[0](t0 + t1) + cos_hat_list[1](t0 - t1))+0.5*L1*(cos_hat_list[2](t0 + t1 + t2) + cos_hat_list[2](t0 - t1 - t2)),
 
-        0.5*L0*(sin_hat_list[0](t0 + t1) + sin_hat_list[1](t0 - t1))+ 0.5*L1*(sin_hat_list[2](t0 + t1 + t2) + sin_hat_list[3](t0 - t1 - t2)),
+        0.5*L0*(sin_hat_list[0](t0 + t1) + sin_hat_list[1](t0 - t1))+ 0.5*L1*(sin_hat_list[2](t0 + t1 + t2) + sin_hat_list[2](t0 - t1 - t2)),
 
         L0*sin_hat_list[0](t1) + L1*sin_hat_list[1](t1 + t2) 
     ])
+
+    # c0 + c1 + c2 + c2 + s0 + s1 + s2 + s2 + s0 + s1
 
     }
 
@@ -854,45 +1047,17 @@ def plot_basis_surfaces_xy(p_vec, t0, t1, t0_range, t1_range, fixed_subs=None, n
         plt.show()
 
 
-
-
-# For your robot model:
-# p = models["dof3_given"]   # sp.Matrix([px,py,pz])
-# plot_basis_surfaces_xy(p, t0, t1, (np.pi/6, np.pi/2), (np.pi/6, np.pi/2), fixed_subs={t2: 0.3, L0:0.55, L1:0.3})
-def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name, damping=1e-3, tol=1e-1, p=None, p_true=None):
-    if p is None or p_true is None:
-        true_sin = sp.sin
-        true_cos = sp.cos
-
-        T_true = get_robot_fkin_expr(name=robot_name, vars=vars)
-        #T_true is in symbolic form, so directly substitute in the cos=cos_list[0] and sin=sin_list[0] to get the piecewise approximation of the true FK, which we will use for the Jacobian and visual servoing, but we will still use the true FK for the position and target definition
-        expr = T_true
-        print(T_true)
-
-        trig_terms = set()
-        for e in expr.atoms(sp.sin, sp.cos):
-            trig_terms.add(e)
-
-        subs_map = {}
-        for t in trig_terms:
-            arg = t.args[0]
-            if isinstance(t, sp.sin):
-                subs_map[t] = sin_list[0](arg)
-            else:
-                subs_map[t] = cos_list[0](arg)
-
-        T = expr.subs(subs_map)
-        print(T)
-        print("^ MODEL T FROM SUBS ")
-        
-        # T = get_robot_rotation_matrix(name=robot_name, sin_hat=sin_list, cos_hat=cos_list, vars=vars)
-        # --- end-effector position = translation column
-        # p = sp.Matrix([T[0, 3], T[1, 3], T[2, 3]])         # 3x1
-        # p_true = sp.Matrix([T_true[0, 3], T_true[1, 3], T_true[2, 3]])   
-        p=T;p_true=T_true
-
-    print("plotting basis surfaces for x and y...")
+def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name, damping=1e-3, tol=1e-1, p=None, p_true=None, chord_newton= False):
+   
+    # print("plotting basis surfaces for x and y...")
     # plot_basis_surfaces_xy(p, vars[0], vars[1], (np.pi/6, np.pi/2), (np.pi/6, np.pi/2))
+
+    if robot_name == 'dof2_planar' or robot_name=='dof2_alt':
+        dof=2
+    if robot_name == 'dof3_planar' or robot_name=='dof3_alt':
+        dof=3
+
+    vars=vars[:dof]
 
     print("Evaluating Jacobian...")
     J = p.jacobian(vars)                               # 3 x dof
@@ -940,7 +1105,7 @@ def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name,
          # --- define the target in Cartesian space from TRUE FK at q_star (passed in)
         x_star = np.array(p_fun(*q_star), dtype=float).reshape(-1)
         x_hat_star = np.array(p_hat_fun(*q_star), dtype=float).reshape(-1)
-        q_sol, iters, q_hist, e_hist = newton_raphson(f, J_inv, q0, tol=tol, max_iter=60)
+        q_sol, iters, q_hist, e_hist = newton_raphson(f, J_inv, q0, tol=tol, max_iter=60, chord_newton=chord_newton)
         results.append({
             "q0": q0,
             "q_star": q_star,
@@ -974,7 +1139,120 @@ def split_uv(stacked_uv: np.ndarray):
         return [stacked_uv[:, 0:2], stacked_uv[:, 2:4]]
     raise ValueError(f"Expected 2 or 4 columns, got {stacked_uv.shape[1]}")
 
-def plot_convergence_results(results):
+
+def plot_convergence_results_not_vs(results):
+    """Plot results from evaluate_joint_space."""
+    dim = len(results[0]["q_star"])
+    print("DIM:", dim)
+
+    q0 = np.array([r["q0"] for r in results])
+    q_stars = np.array([r["q_star"] for r in results])
+    errors = np.array([r["final_error"] for r in results])
+    converged = np.array([r["converged"] for r in results])
+
+    if dim == 2:
+        plt.figure()
+
+        sc = plt.scatter(
+            q_stars[:, 0],
+            q_stars[:, 1],
+            c=errors,
+            cmap="viridis"
+        )
+        # mask = converged
+
+        # plt.scatter(
+        #     q_stars[~mask, 0],
+        #     q_stars[~mask, 1],
+        #     c="red",
+        #     marker="x",
+        #     label="Did not converge"
+        # )
+
+        # sc = plt.scatter(
+        #     q_stars[mask, 0],
+        #     q_stars[mask, 1],
+        #     c=errors[mask],
+        #     cmap="viridis",
+        #     label="Converged"
+        # )
+
+        plt.scatter(
+            q0[0][0],
+            q0[0][1],
+            c="black",
+            s=200,
+            marker="o",
+            edgecolors="white",
+            linewidths=1.5,
+            label="Initial q0",
+            zorder=10
+        )
+
+        plt.colorbar(sc, label="Final error")
+        plt.xlabel("q_star[0]")
+        plt.ylabel("q_star[1]")
+        plt.title("Convergence across joint space (color by final error)")
+        plt.grid(True)
+        plt.show()
+
+    elif dim == 3:
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+
+        # sc = ax.scatter(
+        #     q_stars[:, 0],
+        #     q_stars[:, 1],
+        #     q_stars[:, 2],
+        #     c=errors,
+        #     cmap="viridis"
+        # )
+
+        q0 = np.array(results[0]["q0"])  # shape (3,)
+
+        ax.scatter(
+            q0[0],
+            q0[1],
+            q0[2],
+            c="black",
+            s=200,
+            marker="o",
+            edgecolors="white",
+            linewidths=1.5,
+            label="Initial q0"
+        )
+
+        mask = converged
+
+        ax.scatter(
+            q_stars[~mask, 0],
+            q_stars[~mask, 1],
+            q_stars[~mask, 2],
+            c="red",
+            marker="x",
+            label="Did not converge"
+        )
+
+        sc = ax.scatter(
+            q_stars[mask, 0],
+            q_stars[mask, 1],
+            q_stars[mask, 2],
+
+            c=errors[mask],
+            cmap="viridis",
+            label="Converged"
+        )
+
+
+        fig.colorbar(sc, ax=ax, label="Final error")
+        ax.set_xlabel("q_star[0]")
+        ax.set_ylabel("q_star[1]")
+        ax.set_zlabel("q_star[2]")
+        ax.set_title("Convergence across joint space (color by final error)")
+        ax.grid(True)
+        plt.show()
+
+def plot_convergence_results(results, real_p_true_fn = None):
     """Plot results from evaluate_joint_space."""
     dim = len(results[0]["q_star"])
     x_hat_stars = np.array([r["x_hat_star"] for r in results])
@@ -984,14 +1262,101 @@ def plot_convergence_results(results):
     errors = np.array([r["final_error"] for r in results])
     converged = np.array([r["converged"] for r in results])
 
-    # Plot the FK shape in IMAGE SPACE (u,v)
+    # ------------------------------------------------------------------
+    # 1) Plot convergence in JOINT SPACE, colored by final error
+    # ------------------------------------------------------------------
+    if dim == 2:
+        plt.figure()
+
+        sc = plt.scatter(
+            q_stars[:, 0],
+            q_stars[:, 1],
+            c=errors,
+            cmap="viridis"
+        )
+
+        # Optional: mark non-converged points differently
+        # mask = converged
+        # plt.scatter(
+        #     q_stars[~mask, 0],
+        #     q_stars[~mask, 1],
+        #     c="red",
+        #     marker="x",
+        #     label="Did not converge"
+        # )
+
+        plt.scatter(
+            q0[0, 0],   # same q0 for all results
+            q0[0, 1],
+            c="black",
+            s=200,
+            marker="o",
+            edgecolors="white",
+            linewidths=1.5,
+            label="Initial q0",
+            zorder=10
+        )
+
+        plt.colorbar(sc, label="Final error")
+        plt.xlabel("q_star[0]")
+        plt.ylabel("q_star[1]")
+        plt.title("Convergence across joint space (color by final error)")
+        plt.grid(True)
+        plt.legend()
+        plt.show()
+
+    elif dim == 3:
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+
+        sc = ax.scatter(
+            q_stars[:, 0],
+            q_stars[:, 1],
+            q_stars[:, 2],
+            c=errors,
+            cmap="viridis"
+        )
+
+        ax.scatter(
+            q0[0, 0],   # same q0 for all results
+            q0[0, 1],
+            q0[0, 2],
+            c="black",
+            s=200,
+            marker="o",
+            edgecolors="white",
+            linewidths=1.5,
+            label="Initial q0"
+        )
+
+        fig.colorbar(sc, ax=ax, label="Final error")
+        ax.set_xlabel("q_star[0]")
+        ax.set_ylabel("q_star[1]")
+        ax.set_zlabel("q_star[2]")
+        ax.set_title("Convergence across joint space (color by final error)")
+        ax.legend()
+        plt.show()
+
+    # ------------------------------------------------------------------
+    # 2) Plot the FK SHAPE in IMAGE SPACE (u, v)
+    # ------------------------------------------------------------------
     x_stars_list = split_uv(x_stars)
-    x_hat_list   = split_uv(x_hat_stars)
+    x_hat_list = split_uv(x_hat_stars)
 
     if len(x_stars_list) == 1:
         plt.figure()
-        plt.scatter(x_stars_list[0][:, 0], x_stars_list[0][:, 1], c="black", label="s* true")
-        plt.scatter(x_hat_list[0][:, 0],   x_hat_list[0][:, 1],   c="orange", label="ŝ* model")
+        plt.scatter(
+            x_stars_list[0][:, 0],
+            x_stars_list[0][:, 1],
+            c="black",
+            label="s* true"
+        )
+        plt.scatter(
+            x_hat_list[0][:, 0],
+            x_hat_list[0][:, 1],
+            c="orange",
+            label="ŝ* model"
+        )
         plt.xlabel("u (pixels)")
         plt.ylabel("v (pixels)")
         plt.title("Forward map samples in image space (1 camera)")
@@ -1002,18 +1367,118 @@ def plot_convergence_results(results):
     elif len(x_stars_list) == 2:
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
         for i, ax in enumerate(axes):
-            ax.scatter(x_stars_list[i][:, 0], x_stars_list[i][:, 1], c="black", label="s* true")
-            ax.scatter(x_hat_list[i][:, 0],   x_hat_list[i][:, 1],   c="orange", label="ŝ* model")
+            ax.scatter(
+                x_stars_list[i][:, 0],
+                x_stars_list[i][:, 1],
+                c="black",
+                label="s* true"
+            )
+            ax.scatter(
+                x_hat_list[i][:, 0],
+                x_hat_list[i][:, 1],
+                c="orange",
+                label="ŝ* model"
+            )
             ax.set_xlabel("u (pixels)")
             ax.set_ylabel("v (pixels)")
             ax.set_title(f"Camera {i+1}")
             ax.grid(True)
             ax.legend()
+
         fig.suptitle("Forward map samples in image space (2 cameras)")
         plt.tight_layout()
         plt.show()
 
+    # using the forward kinematics, plot q_star as fkim_star in the real world space to evaluate whether we can successfully converge in that area.
+    # pass through each joint (q_star in q_stars) through the forward kineamtic function (real_p_true_fn)
+    # then assign a color map or the errors (errors) to the real world points
+    # if the real world point is indeed 3D, that is good but if it is in 2D, just add a third dimension so all of the plots are in 3D
+        # ------------------------------------------------------------------
+    # 3) Plot q_star mapped through real_p_true_fn in WORLD SPACE, colored by error
+    # ------------------------------------------------------------------
+    if real_p_true_fn is not None:
+        import sympy as sp
 
+        world_points = []
+
+        # If real_p_true_fn is a SymPy expression/matrix, convert it to a callable
+        if isinstance(real_p_true_fn, sp.MatrixBase):
+            joint_syms = sorted(real_p_true_fn.free_symbols, key=lambda s: s.name)
+            real_p_callable = sp.lambdify(joint_syms, real_p_true_fn, modules="numpy")
+
+            for q_star in q_stars:
+                p = np.asarray(real_p_callable(*q_star), dtype=float).reshape(-1)
+
+                if p.size == 2:
+                    p = np.array([p[0], p[1], 0.0])
+                elif p.size > 3:
+                    p = p[:3]
+                elif p.size < 2:
+                    raise ValueError("real_p_true_fn must return at least 2 coordinates.")
+
+                world_points.append(p)
+
+        else:
+            # Assume it is already a normal Python callable
+            for q_star in q_stars:
+                p = np.asarray(real_p_true_fn(q_star), dtype=float).reshape(-1)
+
+                if p.size == 2:
+                    p = np.array([p[0], p[1], 0.0])
+                elif p.size > 3:
+                    p = p[:3]
+                elif p.size < 2:
+                    raise ValueError("real_p_true_fn must return at least 2 coordinates.")
+
+                world_points.append(p)
+
+        world_points = np.array(world_points)
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+
+        sc = ax.scatter(
+            world_points[:, 0],
+            world_points[:, 1],
+            world_points[:, 2],
+            c=errors,
+            cmap="viridis"
+        )
+
+        fig.colorbar(sc, ax=ax, label="Final error")
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_zlabel("z")
+        ax.set_title("Convergence in real world space (color by final error)")
+        plt.show()
+    
+
+def jacobian_max_entry_error(model_J, true_J):
+
+    model_J = np.array(model_J)
+    true_J = np.array(true_J)
+
+    scale = np.max(np.abs(true_J))
+    if scale == 0:
+        scale = 1.0
+
+    flat_model_J = model_J.flatten()
+    flat_true_J = true_J.flatten()
+
+    upper_error_scaling = -np.inf
+    lower_error_scaling = np.inf
+
+    for m, t in zip(flat_model_J, flat_true_J):
+
+        scaling = (m - t) / scale
+        print(f"scaling = {scaling} = ({m} - {t})/{scale}")
+
+        upper_error_scaling = max(upper_error_scaling, scaling)
+        lower_error_scaling = min(lower_error_scaling, scaling)
+
+    print(upper_error_scaling, lower_error_scaling)
+    return upper_error_scaling, lower_error_scaling
+        
 def get_best_model_main(name):
     '''
     for the robot we have its forward kinematics expressed as p.
@@ -1026,56 +1491,75 @@ def get_best_model_main(name):
             [9, 9, 9, 9, 9]
             []
     '''
-    name = 'dof2_planar'
+
     if name=='dof2_planar' or name=='dof2_alt':
         dof=2
     elif name=='dof3_planar' or name=='dof3_alt':
         dof=3
+    vars=sp.symbols(f'q0:{dof}')
     q0     = np.array([pi/4, pi/4, pi/3][:dof], dtype=float)
-    p_true = get_robot_fkin_expr(name=name, vars=sp.symbols(f'q0:{dof}'))
+    p_true = get_robot_fkin_expr(name=name, vars=vars, cameras=[cam1, cam2])
+    J_true = p_true.jacobian(vars)  
+    J_true_fun = sp.lambdify(vars, J_true, "numpy")
     planar_combinations = get_robot_possible_linear_model_combinations(name=name)
 
 
     print(planar_combinations)
 
-    result_convergence=[]
-    result_error=[]
+    result_score=[]
+    number_of_linear_pieces_in_the_model=[] #this does not indicate how many parmaters yet but wwe definitely need to do this
+    number_of_linear_pieces_in_the_model = [21, 39, 56, 74]
     for i in range(len(planar_combinations)):
         sin_list, cos_list = planar_combinations[i]
         print(f"Model {i+1}:")
         print(f"  sin_list: {[s.__name__ for s in sin_list]}")
         print(f"  cos_list: {[c.__name__ for c in cos_list]}")
-        p = get_robot_fkin_expr(name='dof2_planar', vars=sp.symbols("q0:2"), sin_hat_list=sin_list, cos_hat_list=cos_list)
+        p = get_vs_fkin_expr(name='dof2_planar', vars=sp.symbols("q0:2"), sin_hat_list=sin_list, cos_hat_list=cos_list, cameras=[cam1,cam2]) #approximated model
+        J_model = p.jacobian(vars)  
+        J_model_fun = sp.lambdify(vars, J_model, "numpy")
+
         #now we want to check two error metrics:
         # 1. check the convergence of newtons method over the joint space
         # 2. check how much error each entry had compared to the true
 
-        results = evaluate_joint_space([(pi/6, pi/2)] * dof, sin_list=sin_list, cos_list=cos_list,vars=sp.symbols(f'q0:{dof}'), q0=q0, robot_name=name, p=p, p_true=p_true)
-        dim = len(results[0]["q_star"])
-        x_hat_stars = np.array([r["x_hat_star"] for r in results])
-        x_stars = np.array([r["x_star"] for r in results])
-        # q0 = np.array([r["q0"] for r in results])
-        q_stars = np.array([r["q_star"] for r in results])
-        errors = np.array([r["final_error"] for r in results])
-        converged = np.array([r["converged"] for r in results])
-        
-        # measure average normalized error and average normalized convergence rate across the joint space
-        avg_error = np.mean(errors)
-        avg_converged = sum(converged) / len(converged)
-        print(f"  Average final error: {avg_error:.4f}")
-        print(f"  Average convergence rate: {avg_converged:.2%}")
+        # for each jointconfig in the joint space, evaluate the jacobian and count the ratio of jacobian scaling error is within bounds vs not in bounds
+        joint_ranges = [JOINT_RANGE] * dof
 
-        result_convergence.append(avg_converged)
-        result_error.append(avg_error)
+        grids = [np.linspace(r[0], r[1], num=10) for r in joint_ranges]
+    # print("GRIDS:", grids)
+        
+        joints = np.array(np.meshgrid(*grids)).T.reshape(-1, len(joint_ranges))
+        number_of_joint_configurations = len(joints)
+        # print("joints", joints)
+        good_count = 0
+        for j in joints:
+            J_true_q = J_true_fun(*j)
+            J_model_q = J_model_fun(*j)
+            J_true_q = np.trunc(J_true_q * 1000) / 1000
+            J_model_q = np.trunc(J_model_q * 1000) / 1000
+            print("---")
+            print(J_model_q)
+            print(J_true_q)
+            u, l = jacobian_max_entry_error(J_model_q, J_true_q )
+            
+            #hard code bounds for now, maybe lower = -0.5, upper = 1.5
+            upper_acceptable_scaling = 1.5
+            lower_acceptable_scaling = -0.5
+            if lower_acceptable_scaling <= l <= u <= upper_acceptable_scaling:
+                good_count+=1
+
+        score = good_count /  number_of_joint_configurations       
+        print(score)
+        result_score.append(score)
 
     # get the best model based on convergence rate and error
-    best_index = np.argmax(result_convergence)  # or use a weighted metric of convergence
+    best_index = np.argmax(result_score)  # or use a weighted metric of convergence
     best_model = planar_combinations[best_index]
-    print(f"Best model: {best_index+1} with convergence rate {result_convergence[best_index]:.2%} and average error {result_error[best_index]:.4f}")
+    print(f"Best model: {best_index+1} with perturbation score {result_score[best_index]:.2%}")
 
     # plot convergence rate vs error for each model
     plt.figure()
-    plt.scatter(result_convergence, result_error)   
+    plt.scatter(number_of_linear_pieces_in_the_model, result_score)   
     plt.xlabel("Average Convergence Rate")
     plt.ylabel("Average Final Error")
     plt.title(f"Model Comparison for {name}")
@@ -1084,9 +1568,10 @@ def get_best_model_main(name):
 
 
 # get_best_model_main(name='dof2_planar')
-# valid_jacobian_perturbation_bounds_main()
+valid_jacobian_perturbation_bounds_main()
 # main()
-eval_joint_space_main()
+# eval_joint_space_main()
+# PLOT_using_chord_for_convergence_true_real()
 
 # def script(sin_list, cos_list, vars):
 #     rotation_matrix = get_robot_rotation_matrix(sin_hat=sin_list, cos_hat=cos_list, vars)
