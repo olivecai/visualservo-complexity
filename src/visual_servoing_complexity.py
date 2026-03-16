@@ -55,10 +55,12 @@ sin = sp.sin
 cos = sp.cos
 sqrt = sp.sqrt
 JOINT_RANGE=(pi/6, pi/2)
-small_extra_range=pi/12
+small_extra_range=0*pi/12
 # lower=(pi/6)-2*(pi/2)-(pi/12), upper=3*(pi/2)+(pi/12)
+# (-5pi/6, 3pi/2)
 LOWER_SINUSOID = JOINT_RANGE[0] - 2* JOINT_RANGE[1] - small_extra_range
 UPPER_SINUSOID = JOINT_RANGE[1] * 3 + small_extra_range
+
 
 
 from robot_toolbox.camera import Camera
@@ -282,7 +284,10 @@ def plot_spectral_norm_history(sig_ct, sig_cm, sig_nt, sig_nm):
 def get_p_and_p_true(sin_list, cos_list, vars, robot_name,cameras=[cam1,cam2]):
     # --- build symbolic FK (4x4) using your rotation-matrix chain
     T_true = get_robot_fkin_expr(name=robot_name, vars=vars, cameras=cameras)
-    T = get_vs_fkin_expr(name=robot_name, vars=vars, sin_hat_list=sin_list, cos_hat_list=cos_list, cameras=cameras)
+    if cameras is not None:
+        T = get_vs_fkin_expr(name=robot_name, vars=vars, sin_hat_list=sin_list, cos_hat_list=cos_list, cameras=cameras)
+    else:
+        T = get_robot_fkin_expr(name=robot_name, vars=vars, cameras=cameras, sin_hat_list=sin_list, cos_hat_list=cos_list)
     print(f"T:{T}, T_true:{T_true}")
     #T_true is in symbolic form, so directly substitute in the cos=cos_list[0] and sin=sin_list[0] to get the piecewise approximation of the true FK, which we will use for the Jacobian and visual servoing, but we will still use the true FK for the position and target definition
     # T = get_robot_rotation_matrix(name=robot_name, sin_hat=sin_list, cos_hat=cos_list, vars=vars)
@@ -293,17 +298,19 @@ def get_p_and_p_true(sin_list, cos_list, vars, robot_name,cameras=[cam1,cam2]):
     return p, p_true
 
 
-def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3, chord_newton=False, jacobian_eps_max=1.0,p=None,p_true=None, tol=1e-1):
+def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3, chord_newton=False, jacobian_eps_max=0.0,p=None,p_true=None, tol=1e-1, cameras=None):
     # --- build symbolic FK (4x4) using your rotation-matrix chain
     if p is None or p_true is None:
-        p,p_true = get_p_and_p_true(sin_list, cos_list, vars, robot_name, cameras=cams)
+        p,p_true = get_p_and_p_true(sin_list, cos_list, vars, robot_name, cameras=cameras)
 
-    J = p.jacobian(vars)                               # 3 x dof
+    J = p.jacobian(vars)   
+    J_true  = p_true.jacobian(vars)                            # 3 x dof
 
     # --- numeric callables
 
     p_fun = sp.lambdify(vars, p_true, "numpy")
     J_fun = sp.lambdify(vars, J, "numpy")
+    J_true_fun = sp.lambdify(vars, J_true, "numpy")
 
     
         # knot range for numeric wrapping
@@ -349,11 +356,16 @@ def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3, chord
     # --- collect Cartesian trajectory and spectral norms
     x_hist = np.array([np.array(p_fun(*q), dtype=float).reshape(-1) for q in q_hist])
 
-    sig_hist = []
+    if chord_newton:
+        J_q = J_fun(*q_hist[0])
+    max_entrywise_jacobian_residual = []
     for q in q_hist:
-        s = np.linalg.svd(np.array(J_fun(*q), dtype=float), compute_uv=False)
-        sig_hist.append(float(s[0]))
-    sig_hist = np.array(sig_hist)
+        if not chord_newton:
+            J_q = J_fun(*q)
+        J_true_q = J_true_fun(*q)
+        print("J_q, J_true_q", J_q, J_true_q)
+        largest_jacobian_entry_wise_residual = jacobian_max_entry_error(J_q, J_true_q)
+        max_entrywise_jacobian_residual.append(largest_jacobian_entry_wise_residual)
 
     return {
         "p": p, "J": J,
@@ -362,7 +374,7 @@ def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3, chord
         "q_sol": q_sol, "iters": iters,
         "q_hist": q_hist, "x_hist": x_hist,
         "e_hist": e_hist,
-        "sig_hist": sig_hist,
+        "max_entrywise_jacobian_residual": max_entrywise_jacobian_residual,
     }
 
 def get_perturbed_jacobian(J, eps_max):
@@ -388,6 +400,7 @@ def valid_jacobian_perturbation_bounds_main():
     '''
     # dof = 3
     # planar=0
+    cameras=[cam1,cam2]
     for dof in [2, 3]:
         for planar in [0, 1]:
 
@@ -406,8 +419,7 @@ def valid_jacobian_perturbation_bounds_main():
 
             eps_lim_values = np.linspace(-3, 3, 100)  # 46 values from -1.5 to 3 in steps of 0.1
             results = []
-
-            p_true = get_robot_fkin_expr(name=robot_name,vars=vars, cameras=[cam1, cam2])
+            p_true = get_robot_fkin_expr(name=robot_name,vars=vars, cameras=cameras)
             for eps in eps_lim_values:
                 #make q0 and q_star random within jointn lim:
                 q0 = np.random.uniform(joint_ranges[0][0], joint_ranges[0][1], size=dof)
@@ -415,7 +427,7 @@ def valid_jacobian_perturbation_bounds_main():
                     # --- damped pseudo-inverse Jacobian (stable)
                 runs=[]
                 for run in range(50):
-                    runs.append(script(sin_list_true, cos_list_true, vars, robot_name, q0, q_star, damping=1e-3, chord_newton=chord_flag, jacobian_eps_max=eps,p=p_true,p_true=p_true, tol=tol))
+                    runs.append(script(sin_list_true, cos_list_true, vars, robot_name, q0, q_star, damping=1e-3, chord_newton=chord_flag, jacobian_eps_max=eps,p=p_true,p_true=p_true, tol=tol, cameras=cameras))
                 avg=np.mean([r["e_hist"][-1] for r in runs])
                 print(f"eps_lim: {eps:.2f}, avg final error: {avg:.4f}")
                 results.append(avg)
@@ -511,119 +523,88 @@ def eval_joint_space_main():
 # --------------------------
 # main (updated: run 4 cases + CLI flag for chord/newton)
 # --------------------------
+
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--chord_newton",
-        action="store_true",
-        help="If set, runs chord Newton (fixed Jacobian) for the selected runs."
-    )
-    parser.add_argument(
-        "--run_both",
-        action="store_true",
-        help="If set, run BOTH chord and full Newton and plot 4-way comparisons (recommended)."
-    )
-    args = parser.parse_args()
+    #comparison suites:
+    # suite 1: non visual servoing newton true model vs non visual servoing chord true model
+    # suite 2: non visual servoing newton true model vs non visual servoing newton linear model
+    # suite 3: non visual servoing newton true model vs visual servoing newton true model 
+    # suite 4: visual servoing newton true model vs visual servoing newton linear model vs visual servoing chord true model vs visual servoing chord linear model
+    visualservo = True
+    truemodel= True
+    newtoniteration= True
+    amr = True
+    suite1 = [[not visualservo, truemodel, newtoniteration, not amr], [not visualservo, truemodel, not newtoniteration, not amr]]
+    suite2 = [[not visualservo, truemodel, newtoniteration, not amr, not visualservo, not truemodel, newtoniteration, not amr]]
+    suite3 = [[not visualservo, truemodel, newtoniteration, not amr], [visualservo, truemodel, newtoniteration, not amr]]
+    suite4 = [[visualservo, truemodel, newtoniteration, not amr],[visualservo, truemodel, not newtoniteration, not amr],[visualservo, not truemodel, newtoniteration, not amr],[visualservo, not truemodel, not newtoniteration, not amr]]
+    suite5 =[[visualservo, truemodel, newtoniteration, not amr], [visualservo, not truemodel, newtoniteration, amr],[visualservo, not truemodel, newtoniteration, not amr]]
+    current_suite = suite5
+    all_suites = [suite1,suite2,suite3,suite4, suite5]
 
-    dof = 2
-    planar=1
-    structure_type = "planar" if planar else "alt"
+    dof = 3
+    planar_alt = 0
+    structure = "planar" if planar_alt else "alt"
     vars = sp.symbols(f"q0:{dof}", real=True)
-    robot_name = f"dof{dof}_{structure_type}"
-    joint_ranges = [(pi/6, pi/2)] * dof
+    robot_name = f"dof{dof}_{structure}"
 
-    q0     = np.array([pi/4, pi/3, pi/3][:dof], dtype=float)
+    q0     = np.array([pi/4, pi/4, pi/3][:dof], dtype=float)
     q_star = np.array([pi/5, pi/2, pi/4][:dof], dtype=float)
 
-    # --- build piecewise trig lists once
-    sin_list_hat = []
-    cos_list_hat = []
-    # for _ in range(dof): #### OUTDATED since now we have the handmade linear combos
-    #     sin_knots = np.linspace(-2*pi, 2*pi, 15)
-    #     cos_knots = np.linspace(-2*pi, 2*pi, 15)
-    #     sin_list_hat.append(create_piecewise_sinusoid(sp.sin, sin_knots))
-    #     cos_list_hat.append(create_piecewise_sinusoid(sp.cos, cos_knots))
-    planar_combinations = get_robot_possible_linear_model_combinations(name=robot_name)
-    sin_list_hat,cos_list_hat = planar_combinations[1]
-    sin_list_hat.append(sin) #this is just here to not break indexing but it seriously doesnt affect anything
-    cos_list_hat.append(cos) #same as above comment!
-
-
+    # true trig
     sin_list_true = [sp.sin] * dof
     cos_list_true = [sp.cos] * dof
-
-    # choose which solver modes to run
-    modes = []
-    if args.run_both:
-        modes = [("chord", True), ("newton", False)]
-    else:
-        modes = [("chord" if args.chord_newton else "newton", args.chord_newton)]
-
-    # run (solver mode) x (model/true)
-    outs = {}  # outs[(mode_name, "true"/"model")] = script output
-
-    for mode_name, chord_flag in modes:
-        outs[(mode_name, "true")] = script(
-            sin_list=sin_list_true,
-            cos_list=cos_list_true,
+    planar_combinations = get_robot_possible_linear_model_combinations(name=robot_name)
+    model_idx = 3
+    sin_list_hat, cos_list_hat = planar_combinations[model_idx]
+    outs = []
+    for s in current_suite:
+        print("CURRENT SUITE", s)
+        vs_nvs, true_linear, newton_chord, amr_namr = s
+        cameras = [cam1,cam2] if vs_nvs else None
+        sin_list = sin_list_true if true_linear else sin_list_hat
+        cos_list = cos_list_true if true_linear else cos_list_hat
+        if true_linear:
+            p=p_true=None
+        if not true_linear:
+            if amr_namr:
+                    p_true = get_robot_fkin_expr(name=robot_name, vars=vars, cameras=cameras)
+                        # [0.05, 0.1, 0.2, 0.4, 0.6, 0.8]:
+                    pw_expr, leaves, eval_fn, info = sympy_amr_piecewise_jacobian(
+                        expr_matrix=p_true,
+                        vars=vars,
+                        bounds=[JOINT_RANGE]*dof,
+                        jacobian_tol=0.1,
+                        max_depth=6,
+                        min_width=0.08,
+                        samples_per_cell=60,
+                        test_samples_per_cell=100,
+                        splitter="worst_dim",
+                        seed=1,
+                    )
+                    p = pw_expr
+            else:
+                p=p_true=None
+        # def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3, chord_newton=False, jacobian_eps_max=1.0,p=None,p_true=None, tol=1e-1):
+        out = script(
+            sin_list=sin_list,
+            cos_list=cos_list,
             vars=vars,
             robot_name=robot_name,
             q0=q0,
             q_star=q_star,
-            chord_newton=chord_flag
+            chord_newton=not newton_chord,
+            jacobian_eps_max=0,
+            p=p,
+            p_true=p_true,
+            cameras=cameras
         )
-        outs[(mode_name, "model")] = script(
-            sin_list=sin_list_hat,
-            cos_list=cos_list_hat,
-            vars=vars,
-            robot_name=robot_name,
-            q0=q0,
-            q_star=q_star,
-            chord_newton=chord_flag
-        )
+        outs.append(out)
 
-    # For 4-way plots we need both modes
-    if not args.run_both:
-        mode_name, _ = modes[0]
-        out_t = outs[(mode_name, "true")]
-        out_m = outs[(mode_name, "model")]
-        x_star = out_t["x_star"]
+        x_star = out["x_star"]
+        error_per_step = np.linalg.norm(out["x_hist"] - x_star.reshape(1, -1), axis=1)
 
-        e_t = np.linalg.norm(out_t["x_hist"] - x_star.reshape(1, -1), axis=1)
-        e_m = np.linalg.norm(out_m["x_hist"] - x_star.reshape(1, -1), axis=1)
-
-        # reuse your old 2-way plots (or keep these as-is)
-        plot_cartesian_trajectory(out_t["x_hist"], out_m["x_hist"], out_t["x_hist"], out_m["x_hist"], x_star)
-        plot_joint_trajectory(out_t["q_hist"], out_m["q_hist"], out_t["q_hist"], out_m["q_hist"])
-        plot_error_history(e_t, e_m, e_t, e_m)
-        plot_spectral_norm_history(out_t["sig_hist"], out_m["sig_hist"], out_t["sig_hist"], out_m["sig_hist"])
-        return
-
-    # 4-way plot data
-    out_ct = outs[("chord", "true")]
-    out_cm = outs[("chord", "model")]
-    out_nt = outs[("newton", "true")]
-    out_nm = outs[("newton", "model")]
-
-    # use a single target for fair comparison (true target from true FK at q_star)
-    x_star = out_ct["x_star"]
-
-    e_ct = np.linalg.norm(out_ct["x_hist"] - x_star.reshape(1, -1), axis=1)
-    e_cm = np.linalg.norm(out_cm["x_hist"] - x_star.reshape(1, -1), axis=1)
-    e_nt = np.linalg.norm(out_nt["x_hist"] - x_star.reshape(1, -1), axis=1)
-    e_nm = np.linalg.norm(out_nm["x_hist"] - x_star.reshape(1, -1), axis=1)
-
-    plot_cartesian_trajectory(out_ct["x_hist"], out_cm["x_hist"], out_nt["x_hist"], out_nm["x_hist"], x_star)
-    plot_joint_trajectory(out_ct["q_hist"], out_cm["q_hist"], out_nt["q_hist"], out_nm["q_hist"])
-    plot_error_history(e_ct, e_cm, e_nt, e_nm)
-    plot_spectral_norm_history(out_ct["sig_hist"], out_cm["sig_hist"], out_nt["sig_hist"], out_nm["sig_hist"])
-
-    print("\n--- Summary (4-way) ---")
-    print(f"Target x*: {x_star}")
-    print(f"Chord  True:  iters={out_ct['iters']}, final ||e||={e_ct[-1]}")
-    print(f"Chord  Model: iters={out_cm['iters']}, final ||e||={e_cm[-1]}")
-    print(f"Newton True:  iters={out_nt['iters']}, final ||e||={e_nt[-1]}")
-    print(f"Newton Model: iters={out_nm['iters']}, final ||e||={e_nm[-1]}")
+        np.savez(f"main_script_suite{s}_model_idx{model_idx}_robot{robot_name}", max_entrywise_jacobian_residual=out["max_entrywise_jacobian_residual"], x_hist = out["x_hist"], q_hist = out["q_hist"], x_star=x_star, error_per_step=error_per_step, iters=out["iters"])
 
 def get_robot_possible_linear_model_combinations(name:str='dof2_planar', lower=LOWER_SINUSOID, upper=UPPER_SINUSOID):
     '''>>> (pi/6)-2*(pi/2)
@@ -660,9 +641,9 @@ def get_robot_possible_linear_model_combinations(name:str='dof2_planar', lower=L
     cos_hat_C=create_piecewise_sinusoid(sp.cos, cos_knots_C)
     cos_hat_D=create_piecewise_sinusoid(sp.cos, cos_knots_D)
 
-    # # cos_hat=create_piecewise_sinusoid(sp.cos, np.linspace(lower, upper, 10))
+    # cos_hat=create_piecewise_sinusoid(sp.cos, np.linspace(lower, upper, 10))
     # x = sp.symbols('x')
-    # expr = cos_hat(x)
+    # expr = sin_hat_A(x)
     # f = sp.lambdify(x, expr, "numpy")
     # xs = np.linspace(lower+0.01, upper-0.01, 1000)
     # ys = f(xs)
@@ -705,6 +686,7 @@ def get_robot_possible_linear_model_combinations(name:str='dof2_planar', lower=L
 
     return models[name]
 
+
 def get_count_of_linear_pieces():
     ''' a hardcoded function just for storage and  my own convenience, not to be used in scripts'''    
     sA = 3
@@ -716,8 +698,12 @@ def get_count_of_linear_pieces():
     sD = 11
     cD = 10
 
-    s0 = s1 = s2 = sD
-    c0 = c1 = c2 = cD
+    s0 = sA
+    s1 = sB
+    s2 = sC
+    c0 = cA
+    c1 = cB 
+    c2 = cC
 
     # how many parameters do we actually need to measure for each model ==> how many parameters for each line, then how many lines?
     one = 2 # mx+b
@@ -730,10 +716,7 @@ def get_count_of_linear_pieces():
     dof2_planar = s0*one + s1*two + c0*one + c1*two 
 
     #now this should be the proper count of how many 
-    print(dof2_alt)
-    print(dof2_planar)
-    print(dof3_alt)
-    print(dof3_planar)
+    print(dof2_alt, dof2_planar, dof3_alt, dof3_planar)
 
     ''' jotnotes
     (NOT CAMERA PROJECTION. if camera projection then just multiply each count by TWO)
@@ -741,24 +724,29 @@ def get_count_of_linear_pieces():
     s0 = s1 = s2 = sA
     c0 = c1 = c2 = cA
     dof2_alt, dof2_planar, dof3_alt, dof3_planar = 21, 12, 30, 18
+    " PARAMS = 54 30 99 54
 
      ---      
     s0 = s1 = s2 = sB
     c0 = c1 = c2 = cB
     dof2_alt, dof2_planar, dof3_alt, dof3_planar = 39, 22, 56, 33
+    " PARAMS = 100 55 184 99
 
      ---      
     s0 = s1 = s2 = sC
     c0 = c1 = c2 = cC
     dof2_alt, dof2_planar, dof3_alt, dof3_planar = 56, 32, 80, 48
+    " PARAMS = 144 80 264 144
 
          ---      
     s0 = s1 = s2 = sD
     c0 = c1 = c2 = cD
-    dof2_alt, dof2_planar, dof3_alt, dof3_planar = 74, 42, 106, 63
+    dof2_alt, dof2_planar, dof3_alt, dof3_planar PIECES = 74, 42, 106, 63
+    " PARAMS = 190 105 349 189
 
     '''
-
+# get_count_of_linear_pieces()
+# exit()
 
 def get_vs_fkin_expr(name:str, vars, sin_hat_list=[sin]*4, cos_hat_list=[cos]*4, cameras=[cam1,cam2]):
     ''' to get vs model with constant depth '''
@@ -1047,6 +1035,21 @@ def plot_basis_surfaces_xy(p_vec, t0, t1, t0_range, t1_range, fixed_subs=None, n
         plt.show()
 
 
+
+def save_results_npz(results, filename="results.npz"):
+    data = {
+        "q0": np.array([r["q0"] for r in results]),
+        "q_star": np.array([r["q_star"] for r in results]),
+        "x_star": np.array([r["x_star"] for r in results]),
+        "x_hat_star": np.array([r["x_hat_star"] for r in results]),
+        "q_sol": np.array([r["q_sol"] for r in results]),
+        "iters": np.array([r["iters"] for r in results]),
+        "final_error": np.array([r["final_error"] for r in results]),
+        "converged": np.array([r["converged"] for r in results]),
+    }
+
+    np.savez(filename, **data)
+
 def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name, damping=1e-3, tol=1e-1, p=None, p_true=None, chord_newton= False):
    
     # print("plotting basis surfaces for x and y...")
@@ -1118,6 +1121,8 @@ def evaluate_joint_space(joint_ranges, sin_list, cos_list, q0, vars, robot_name,
         })
 
     
+
+    save_results_npz(results, "ik_results.npz")
 
 
     print("\n--- Summary of convergence across joint space ---")
@@ -1462,22 +1467,28 @@ def jacobian_max_entry_error(model_J, true_J):
     if scale == 0:
         scale = 1.0
 
-    flat_model_J = model_J.flatten()
-    flat_true_J = true_J.flatten()
+    print(model_J)
+    print(true_J)
+    error_scaling = (model_J - true_J) / scale
+    print(error_scaling)
 
-    upper_error_scaling = -np.inf
-    lower_error_scaling = np.inf
+    return np.max(np.abs(error_scaling))
+    # flat_model_J = model_J.flatten()
+    # flat_true_J = true_J.flatten()
 
-    for m, t in zip(flat_model_J, flat_true_J):
+    # upper_error_scaling = -np.inf
+    # lower_error_scaling = np.inf
 
-        scaling = (m - t) / scale
-        print(f"scaling = {scaling} = ({m} - {t})/{scale}")
+    # for m, t in zip(flat_model_J, flat_true_J):
 
-        upper_error_scaling = max(upper_error_scaling, scaling)
-        lower_error_scaling = min(lower_error_scaling, scaling)
+    #     scaling = (m - t) / scale
+    #     print(f"scaling = {scaling} = ({m} - {t})/{scale}")
 
-    print(upper_error_scaling, lower_error_scaling)
-    return upper_error_scaling, lower_error_scaling
+    #     upper_error_scaling = max(upper_error_scaling, scaling)
+    #     lower_error_scaling = min(lower_error_scaling, scaling)
+
+    # print(upper_error_scaling, lower_error_scaling)
+    # return upper_error_scaling, lower_error_scaling
         
 def get_best_model_main(name):
     '''
@@ -1491,14 +1502,29 @@ def get_best_model_main(name):
             [9, 9, 9, 9, 9]
             []
     '''
+    cameras = None
+    if cameras:
+        cam_count= len(cameras)
+    else:
+        cam_count=1
 
-    if name=='dof2_planar' or name=='dof2_alt':
+    if name=='dof2_planar':
+        model_complexity = np.array([30, 55, 80, 105])*cam_count
         dof=2
-    elif name=='dof3_planar' or name=='dof3_alt':
+    if name=='dof2_alt':
+        model_complexity = np.array([54, 100, 144, 190])*cam_count
+        dof=2
+    if name=='dof3_planar':
+        model_complexity = np.array([54, 99, 144, 189])*cam_count
         dof=3
+    if name=='dof3_alt':
+        model_complexity = np.array([99, 184, 264, 349])*cam_count
+        dof=3
+    model_complexity=list(model_complexity)
+
     vars=sp.symbols(f'q0:{dof}')
     q0     = np.array([pi/4, pi/4, pi/3][:dof], dtype=float)
-    p_true = get_robot_fkin_expr(name=name, vars=vars, cameras=[cam1, cam2])
+    p_true = get_robot_fkin_expr(name=name, vars=vars, cameras=cameras)
     J_true = p_true.jacobian(vars)  
     J_true_fun = sp.lambdify(vars, J_true, "numpy")
     planar_combinations = get_robot_possible_linear_model_combinations(name=name)
@@ -1506,17 +1532,45 @@ def get_best_model_main(name):
 
     print(planar_combinations)
 
+    joint_ranges = [JOINT_RANGE]*dof
+
     result_score=[]
-    number_of_linear_pieces_in_the_model=[] #this does not indicate how many parmaters yet but wwe definitely need to do this
-    number_of_linear_pieces_in_the_model = [21, 39, 56, 74]
+
+
+    jacobian_function_models =[]
     for i in range(len(planar_combinations)):
         sin_list, cos_list = planar_combinations[i]
         print(f"Model {i+1}:")
         print(f"  sin_list: {[s.__name__ for s in sin_list]}")
         print(f"  cos_list: {[c.__name__ for c in cos_list]}")
-        p = get_vs_fkin_expr(name='dof2_planar', vars=sp.symbols("q0:2"), sin_hat_list=sin_list, cos_hat_list=cos_list, cameras=[cam1,cam2]) #approximated model
+        # p = get_vs_fkin_expr(name=name, vars=sp.symbols("q0:2"), sin_hat_list=sin_list, cos_hat_list=cos_list, cameras=cameras) #approximated model
+        p =get_robot_fkin_expr(name=name, vars=vars, sin_hat_list=sin_list, cos_hat_list=cos_list, cameras=cameras)
         J_model = p.jacobian(vars)  
         J_model_fun = sp.lambdify(vars, J_model, "numpy")
+        jacobian_function_models.append(J_model_fun)
+    
+    color_code = ['b']*len(jacobian_function_models)
+
+    ###### ADDED SECTION FOR AMR
+    for jacobian_tolerance in [0.05, 0.1, 0.2, 0.4, 0.6, 0.8]:
+        pw_expr, leaves, eval_fn, info = sympy_amr_piecewise_jacobian(
+            expr_matrix=p_true,
+            vars=vars,
+            bounds=joint_ranges,
+            jacobian_tol=jacobian_tolerance,
+            max_depth=6,
+            min_width=0.08,
+            samples_per_cell=60,
+            test_samples_per_cell=100,
+            splitter="worst_dim",
+            seed=1,
+        )
+        J_model = sp.lambdify(vars,pw_expr.jacobian(vars),"numpy")
+        jacobian_function_models.append(J_model)
+        model_complexity.append(info['num_parameters'])
+        color_code.append('r')
+    
+    for J_model_fun in jacobian_function_models:
 
         #now we want to check two error metrics:
         # 1. check the convergence of newtons method over the joint space
@@ -1525,82 +1579,469 @@ def get_best_model_main(name):
         # for each jointconfig in the joint space, evaluate the jacobian and count the ratio of jacobian scaling error is within bounds vs not in bounds
         joint_ranges = [JOINT_RANGE] * dof
 
-        grids = [np.linspace(r[0], r[1], num=10) for r in joint_ranges]
+        grids = [np.linspace(r[0], r[1], num=14) for r in joint_ranges]
     # print("GRIDS:", grids)
         
         joints = np.array(np.meshgrid(*grids)).T.reshape(-1, len(joint_ranges))
         number_of_joint_configurations = len(joints)
         # print("joints", joints)
-        good_count = 0
+        errors = []
         for j in joints:
             J_true_q = J_true_fun(*j)
             J_model_q = J_model_fun(*j)
-            J_true_q = np.trunc(J_true_q * 1000) / 1000
+            J_true_q = np.trunc(J_true_q * 1000) / 1000 #decimal round to 3 places
             J_model_q = np.trunc(J_model_q * 1000) / 1000
             print("---")
             print(J_model_q)
             print(J_true_q)
-            u, l = jacobian_max_entry_error(J_model_q, J_true_q )
-            
-            #hard code bounds for now, maybe lower = -0.5, upper = 1.5
-            upper_acceptable_scaling = 1.5
-            lower_acceptable_scaling = -0.5
-            if lower_acceptable_scaling <= l <= u <= upper_acceptable_scaling:
-                good_count+=1
+            max_error = jacobian_max_entry_error(J_model_q, J_true_q )
+            errors.append(max_error)
+        avg_err = np.mean(errors)
 
-        score = good_count /  number_of_joint_configurations       
+        score = avg_err    #lower is better
         print(score)
         result_score.append(score)
 
+    np.savez(f"pareto_curve_model_{name}_nVS", parameter_count=model_complexity, error=result_score)
+
+
     # get the best model based on convergence rate and error
-    best_index = np.argmax(result_score)  # or use a weighted metric of convergence
-    best_model = planar_combinations[best_index]
+    best_index = np.argmin(result_score)  # or use a weighted metric of convergence
+    # best_model = planar_combinations[best_index]
     print(f"Best model: {best_index+1} with perturbation score {result_score[best_index]:.2%}")
 
-    # plot convergence rate vs error for each model
+    # plot parameter count VS average jacobian error
     plt.figure()
-    plt.scatter(number_of_linear_pieces_in_the_model, result_score)   
-    plt.xlabel("Average Convergence Rate")
-    plt.ylabel("Average Final Error")
-    plt.title(f"Model Comparison for {name}")
+    plt.scatter(model_complexity, result_score, c=color_code)   
+    plt.xlabel("Parameter Count of Model")
+    plt.ylabel("Average Jacobian Perturbation Error")
+    plt.title(f"Model Fitting Pareto Curve for {name}")
     plt.grid(True)
     plt.show()
 
 
+
+
+
+#
+import sympy as sp
+import numpy as np
+
+import sympy as sp
+import numpy as np
+
+import sympy as sp
+import numpy as np
+
+
+def sympy_amr_piecewise_jacobian(
+    expr_matrix,
+    vars,
+    bounds,
+    jacobian_tol=0.1,
+    max_depth=6,
+    min_width=1e-3,
+    samples_per_cell=80,
+    test_samples_per_cell=120,
+    splitter="worst_dim",
+    seed=0,
+    eps=1e-12,
+):
+    """
+    Adaptive mesh refinement for a SymPy Matrix using Jacobian error
+    as the refinement criterion.
+
+    Each leaf stores an affine model:
+        y ≈ A x + b
+    and its Jacobian is the constant matrix A.
+
+    Refinement stops when the maximum sampled Jacobian entry error
+    in the cell is <= jacobian_tol.
+
+    Returns
+    -------
+    piecewise_matrix : sympy.Matrix
+    leaves : list[dict]
+    eval_fn : callable
+    info : dict
+    """
+    expr_matrix = sp.Matrix(expr_matrix)
+    vars = list(vars)
+    n = len(vars)
+
+    if len(bounds) != n:
+        raise ValueError("len(bounds) must match len(vars)")
+
+    bounds = np.asarray(bounds, dtype=float)
+    global_lower = bounds[:, 0].copy()
+    global_upper = bounds[:, 1].copy()
+
+    rng = np.random.default_rng(seed)
+
+    out_shape = expr_matrix.shape
+    expr_vec = expr_matrix.reshape(expr_matrix.rows * expr_matrix.cols, 1)
+    m = expr_vec.rows
+
+    # Numeric function
+    f_num = sp.lambdify(vars, expr_vec, "numpy")
+
+    # Symbolic true Jacobian
+    true_J_expr = expr_vec.jacobian(vars)
+    true_J_num = sp.lambdify(vars, true_J_expr, "numpy")
+
+    def eval_f(X):
+        X = np.asarray(X, dtype=float)
+        if X.ndim == 1:
+            X = X[None, :]
+
+        cols = [X[:, i] for i in range(n)]
+        Y = np.array(f_num(*cols), dtype=float)
+        Y = np.squeeze(Y)
+
+        if Y.ndim == 1:
+            if X.shape[0] == 1 and Y.shape[0] == m:
+                Y = Y.reshape(1, m)
+            else:
+                Y = Y.reshape(-1, 1)
+        elif Y.ndim == 2:
+            if Y.shape == (m, X.shape[0]):
+                Y = Y.T
+            elif Y.shape == (X.shape[0], m):
+                pass
+            elif X.shape[0] == 1:
+                Y = Y.reshape(1, -1)
+            else:
+                Y = Y.reshape(X.shape[0], -1)
+        else:
+            Y = Y.reshape(X.shape[0], -1)
+
+        if Y.shape[1] != m:
+            raise ValueError(f"Unexpected function output shape {Y.shape}, expected second dim {m}")
+        return Y
+
+    def eval_true_J(x):
+        x = np.asarray(x, dtype=float).reshape(-1)
+        J = np.array(true_J_num(*x), dtype=float)
+        return J.reshape(m, n)
+
+    def sample_box(lower, upper, N, include_corners=True):
+        lower = np.asarray(lower, dtype=float)
+        upper = np.asarray(upper, dtype=float)
+
+        pts = []
+
+        if include_corners and n <= 12:
+            for mask in range(1 << n):
+                x = np.empty(n, dtype=float)
+                for i in range(n):
+                    x[i] = upper[i] if ((mask >> i) & 1) else lower[i]
+                pts.append(x)
+            pts.append(0.5 * (lower + upper))
+
+        randN = max(0, N - len(pts))
+        if randN > 0:
+            Xr = lower + rng.random((randN, n)) * (upper - lower)
+            pts.extend(list(Xr))
+
+        X = np.array(pts, dtype=float)
+        X = np.unique(np.round(X, 14), axis=0)
+        return X
+
+    def fit_affine(X, Y):
+        X_aug = np.hstack([X, np.ones((X.shape[0], 1))])
+        theta, *_ = np.linalg.lstsq(X_aug, Y, rcond=None)
+        A = theta[:-1, :].T
+        b = theta[-1, :]
+        return A, b
+
+    def cell_jacobian_error(A, Xtest):
+        """
+        Since affine model has constant Jacobian A, compare A against
+        the true Jacobian at sampled test points in the cell.
+        """
+        errs = []
+        for x in Xtest:
+            J_true = eval_true_J(x)
+            err = jacobian_max_entry_error(A, J_true)
+            errs.append(err)
+        errs = np.array(errs, dtype=float)
+        return float(np.max(errs)), float(np.mean(errs)), errs
+
+    def choose_split_dim(lower, upper, Xtest, errs):
+        widths = upper - lower
+        valid = np.where(widths > min_width)[0]
+        if len(valid) == 0:
+            return None
+
+        if splitter == "largest_dim":
+            return int(valid[np.argmax(widths[valid])])
+
+        if splitter != "worst_dim":
+            raise ValueError("splitter must be 'worst_dim' or 'largest_dim'")
+
+        best_dim = None
+        best_score = -np.inf
+        for d in valid:
+            xd = Xtest[:, d]
+            if np.allclose(np.std(xd), 0):
+                continue
+            c = np.corrcoef(xd, errs)[0, 1]
+            score = abs(c) if np.isfinite(c) else 0.0
+            if score > best_score:
+                best_score = score
+                best_dim = int(d)
+
+        if best_dim is None:
+            return int(valid[np.argmax(widths[valid])])
+        return best_dim
+
+    leaves = []
+
+    def recurse(lower, upper, depth):
+        lower = np.asarray(lower, dtype=float)
+        upper = np.asarray(upper, dtype=float)
+
+        Xfit = sample_box(lower, upper, samples_per_cell, include_corners=True)
+        Yfit = eval_f(Xfit)
+        A, b = fit_affine(Xfit, Yfit)
+
+        Xtest = sample_box(lower, upper, test_samples_per_cell, include_corners=True)
+        jac_max_err, jac_mean_err, jac_errs = cell_jacobian_error(A, Xtest)
+
+        widths = upper - lower
+        can_split = np.any(widths > min_width)
+
+        stop = (jac_max_err <= jacobian_tol) or (depth >= max_depth) or (not can_split)
+
+        if stop:
+            leaves.append({
+                "lower": lower.copy(),
+                "upper": upper.copy(),
+                "A": A.copy(),
+                "b": b.copy(),
+                "jac_max_err": jac_max_err,
+                "jac_mean_err": jac_mean_err,
+                "depth": depth,
+            })
+            return
+
+        d = choose_split_dim(lower, upper, Xtest, jac_errs)
+        if d is None:
+            leaves.append({
+                "lower": lower.copy(),
+                "upper": upper.copy(),
+                "A": A.copy(),
+                "b": b.copy(),
+                "jac_max_err": jac_max_err,
+                "jac_mean_err": jac_mean_err,
+                "depth": depth,
+            })
+            return
+
+        mid = 0.5 * (lower[d] + upper[d])
+
+        if (mid - lower[d] <= eps) or (upper[d] - mid <= eps):
+            leaves.append({
+                "lower": lower.copy(),
+                "upper": upper.copy(),
+                "A": A.copy(),
+                "b": b.copy(),
+                "jac_max_err": jac_max_err,
+                "jac_mean_err": jac_mean_err,
+                "depth": depth,
+            })
+            return
+
+        upper_left = upper.copy()
+        upper_left[d] = mid
+
+        lower_right = lower.copy()
+        lower_right[d] = mid
+
+        recurse(lower, upper_left, depth + 1)
+        recurse(lower_right, upper, depth + 1)
+
+    recurse(global_lower, global_upper, 0)
+
+    def point_in_leaf_half_open(x, leaf):
+        x = np.asarray(x, dtype=float)
+        lower = leaf["lower"]
+        upper = leaf["upper"]
+
+        for xi, l, u, gu in zip(x, lower, upper, global_upper):
+            if xi < l - eps:
+                return False
+            if np.isclose(u, gu, atol=eps, rtol=0.0):
+                if xi > u + eps:
+                    return False
+            else:
+                if xi >= u - eps:
+                    return False
+        return True
+
+    def eval_fn(x):
+        x = np.asarray(x, dtype=float).reshape(-1)
+        if x.shape[0] != n:
+            raise ValueError(f"x must have length {n}")
+
+        for leaf in leaves:
+            if point_in_leaf_half_open(x, leaf):
+                y = leaf["A"] @ x + leaf["b"]
+                return y.reshape(out_shape)
+
+        centers = [0.5 * (leaf["lower"] + leaf["upper"]) for leaf in leaves]
+        idx = int(np.argmin([np.linalg.norm(x - c) for c in centers]))
+        y = leaves[idx]["A"] @ x + leaves[idx]["b"]
+        return y.reshape(out_shape)
+
+    def box_condition_total(lower, upper):
+        conds = []
+        for v, l, u, gu in zip(vars, lower, upper, global_upper):
+            left_cond = (v >= sp.Float(l - eps))
+            if np.isclose(u, gu, atol=eps, rtol=0.0):
+                right_cond = (v <= sp.Float(u + eps))
+            else:
+                right_cond = (v < sp.Float(u - eps/10))
+            conds.append(sp.And(left_cond, right_cond))
+        return sp.And(*conds)
+
+    piecewise_entries = []
+    fallback_leaf = leaves[0]
+
+    for out_idx in range(m):
+        cases = []
+        for leaf in leaves:
+            affine_expr = sum(
+                sp.Float(leaf["A"][out_idx, j]) * vars[j] for j in range(n)
+            ) + sp.Float(leaf["b"][out_idx])
+            cond = box_condition_total(leaf["lower"], leaf["upper"])
+            cases.append((affine_expr, cond))
+
+        fallback_expr = sum(
+            sp.Float(fallback_leaf["A"][out_idx, j]) * vars[j] for j in range(n)
+        ) + sp.Float(fallback_leaf["b"][out_idx])
+        cases.append((fallback_expr, True))
+        piecewise_entries.append(sp.Piecewise(*cases))
+
+    piecewise_matrix = sp.Matrix(piecewise_entries).reshape(*out_shape)
+
+    info = {
+        "num_pieces": len(leaves),
+        "num_parameters": len(leaves) * m * (n + 1),
+        "input_dim": n,
+        "output_dim": m,
+        "jacobian_tol": jacobian_tol,
+    }
+
+    return piecewise_matrix, leaves, eval_fn, info
+
+
+def check_amr_coverage(leaves, bounds, n_test=10000, seed=0, eps=1e-12):
+    """
+    Check numeric coverage of the leaf partition over the given box.
+
+    Returns a dict with counts of uncovered and multiply-covered points.
+    With the half-open convention used above, both should usually be zero.
+    """
+    rng = np.random.default_rng(seed)
+    bounds = np.asarray(bounds, dtype=float)
+    global_upper = bounds[:, 1]
+
+    lower = bounds[:, 0]
+    upper = bounds[:, 1]
+    X = lower + rng.random((n_test, len(bounds))) * (upper - lower)
+
+    def point_in_leaf_half_open(x, leaf):
+        for xi, l, u, gu in zip(x, leaf["lower"], leaf["upper"], global_upper):
+            if xi < l - eps:
+                return False
+            if np.isclose(u, gu, atol=eps, rtol=0.0):
+                if xi > u + eps:
+                    return False
+            else:
+                if xi >= u - eps:
+                    return False
+        return True
+
+    uncovered = 0
+    multi = 0
+    for x in X:
+        hits = sum(point_in_leaf_half_open(x, leaf) for leaf in leaves)
+        if hits == 0:
+            uncovered += 1
+        elif hits > 1:
+            multi += 1
+
+    return {
+        "n_test": n_test,
+        "uncovered": uncovered,
+        "multi_covered": multi,
+    }
+
+def eval_amr_leaves(leaves, x, eps=1e-12):
+    x = np.asarray(x, dtype=float)
+    for leaf in leaves:
+        lower = leaf["lower"]
+        upper = leaf["upper"]
+        if np.all(x >= lower - eps) and np.all(x <= upper + eps):
+            A = leaf["A"]
+            b = leaf["b"]
+            return A @ x + b
+    return np.full(leaves[0]["b"].shape, np.nan)
+
+def amr_main():
+                    
+    dof = 3
+    planar=0
+    structure_type = "planar" if planar else "alt"
+    vars = sp.symbols(f"q0:{3}", real=True)
+    robot_name = f"dof{dof}_{structure_type}"
+    joint_ranges = [JOINT_RANGE] * dof
+    cameras=[cam1,cam2]
+
+    expr = get_robot_fkin_expr(name=robot_name, vars=vars, cameras=cameras)
+    pw_expr, leaves, eval_fn, info = sympy_amr_piecewise_jacobian(
+        expr_matrix=expr,
+        vars=vars,
+        bounds=joint_ranges,
+        jacobian_tol=0.7,
+        max_depth=6,
+        min_width=0.08,
+        samples_per_cell=60,
+        test_samples_per_cell=100,
+        splitter="worst_dim",
+        seed=1,
+    )
+
+ 
+    print("piecewise expr:")
+    print(pw_expr)
+
+    f_pw = sp.lambdify(vars, pw_expr, "numpy")
+    f_true = sp.lambdify(vars, expr, "numpy")
+    q = [pi/3, pi/3, pi/4]
+
+    J=sp.lambdify(vars, pw_expr.jacobian(vars), "numpy")
+    J_true = sp.lambdify(vars, expr.jacobian(vars), "numpy")
+    J_q = J(*q)
+    J_true_q = J_true(*q)
+    err= jacobian_max_entry_error(J_q, J_true_q)
+    print(J_q)
+    print(J_true_q)
+    print(err)
+
+    # q = (0.2, -0.3, 0.5)
+    # q= [0.2,-0.3,0.5]
+    print("true =", np.array(f_true(*q), dtype=float).reshape(-1))
+    print("pw   =", np.array(f_pw(*q), dtype=float).reshape(-1))
+    print("amr eval:", np.array(eval_fn(q), dtype=float).reshape(-1))
+    print(info)
+    print("num pieces:", len(leaves))
+
+# amr_main()
 # get_best_model_main(name='dof2_planar')
-valid_jacobian_perturbation_bounds_main()
-# main()
+# valid_jacobian_perturbation_bounds_main()
+main()
 # eval_joint_space_main()
 # PLOT_using_chord_for_convergence_true_real()
-
-# def script(sin_list, cos_list, vars):
-#     rotation_matrix = get_robot_rotation_matrix(sin_hat=sin_list, cos_hat=cos_list, vars)
-#     fkin_function = rotation_matrix[translation column]
-#     jacobian = fkin_function jacobian
-#     jacobian_inv = inv of jacobian
-#     total number of linear hyperplanes: # count the number of segments for each sin cos piece, or the number of linear pieces that combinatorially are created during the matrix multiplications? can we count both?
-#     x, iterations = newton_raphson(fkin_function, jacobian_inv)
-#     print(f"x:{x},iter:{iterations},fkin(x):{fkin_function(x)}")
-
-
-# def main():
-#     # initialize one of our robots via cmd line arg 
-#     dof = int(cmd_line_arg)
-#     vars = sp.symbols(f'q0:{dof}')
-#     robot_name = f"dof{dof}"
-
-#     print("True Sin and Cos:")
-#     sin_list=[sp.sin]*dof
-#     cos_list=[sp.cos]*dof
-#     script(sin_list=sin_list,cos_list=cos_list, vars=vars)
-
-#     print("Approximated Sin and Cos:")
-#     sin_list=[]
-#     cos_list=[]
-#     knots = [[0,pi/2,pi,3*pi/2,2*pi]]
-#     for i in range(dof):
-#         sin_hat = create_piecewise(sp.sin, knots[i])
-#         cos_hat = create_piecewise(sp.cos, knots[i])
-#     script(sin_list=sin_list, cos_list=cos_list, vars=vars)
-
 

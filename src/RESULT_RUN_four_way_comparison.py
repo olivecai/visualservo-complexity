@@ -57,7 +57,7 @@ def create_piecewise_sinusoid(sympy_function, knots):
             y1 = sympy_function(x1)
 
             m = (y1 - y0) / (x1 - x0)
-            m*=1.1
+            m*=1.0 #earlier i was experimenting with changing the slope but i dont think that is a good idea
             c = y0 - m * x0
 
             expr = sp.simplify(m * arg + c)
@@ -191,71 +191,76 @@ def newton_raphson(f, J_inv, x0, tol=1e-3, max_iter=100, bounds=None, chord_newt
 # --------------------------
 # plotting (updated: 4 curves each)
 # --------------------------
-def plot_cartesian_trajectory(xs_ct, xs_cm, xs_nt, xs_nm, x_star):
+def plot_cartesian_trajectory(series, x_star, title="End-effector trajectory (Cartesian)"):
+    """
+    series: list of (xs, label)
+        xs shape: (N, 2) or (N, 3); plots x-y projection
+    """
     plt.figure()
-    plt.plot(xs_ct[:, 0], xs_ct[:, 1], marker="o", label="Chord: True trig")
-    plt.plot(xs_cm[:, 0], xs_cm[:, 1], marker="o", label="Chord: Model trig")
-    plt.plot(xs_nt[:, 0], xs_nt[:, 1], marker="o", label="Newton: True trig")
-    plt.plot(xs_nm[:, 0], xs_nm[:, 1], marker="o", label="Newton: Model trig")
+    for xs, label in series:
+        plt.plot(xs[:, 0], xs[:, 1], marker="o", label=label)
+
     plt.scatter([x_star[0]], [x_star[1]], marker="x", s=90, label="Target")
     plt.axis("equal")
     plt.xlabel("x")
     plt.ylabel("y")
-    plt.title("End-effector trajectory (Cartesian)")
+    plt.title(title)
     plt.grid(True)
     plt.legend()
     plt.show()
 
 
-
-def plot_joint_trajectory(q_ct, q_cm, q_nt, q_nm):
+def plot_joint_trajectory(series, title="Joint-space trajectory"):
+    """
+    series: list of (q_hist, label_prefix)
+        q_hist shape: (N, dof)
+    """
     plt.figure()
-    dof = q_ct.shape[1]
-    it_ct = np.arange(q_ct.shape[0])
-    it_cm = np.arange(q_cm.shape[0])
-    it_nt = np.arange(q_nt.shape[0])
-    it_nm = np.arange(q_nm.shape[0])
-
-    for j in range(dof):
-        plt.plot(it_ct, q_ct[:, j], label=f"q{j} chord true")
-        plt.plot(it_cm, q_cm[:, j], linestyle="--", label=f"q{j} chord model")
-        plt.plot(it_nt, q_nt[:, j], label=f"q{j} newton true")
-        plt.plot(it_nm, q_nm[:, j], linestyle="--", label=f"q{j} newton model")
+    for q_hist, label_prefix in series:
+        dof = q_hist.shape[1]
+        it = np.arange(q_hist.shape[0])
+        for j in range(dof):
+            plt.plot(it, q_hist[:, j], label=f"{label_prefix} q{j}")
 
     plt.xlabel("iteration")
     plt.ylabel("joint angle (rad)")
-    plt.title("Joint-space trajectory")
+    plt.title(title)
     plt.grid(True)
     plt.legend()
     plt.show()
 
 
-def plot_error_history(e_ct, e_cm, e_nt, e_nm):
+def plot_error_history(series, title="Task error vs iteration"):
+    """
+    series: list of (e_hist, label)
+    """
     plt.figure()
-    plt.plot(e_ct, label="Chord: ||e|| true")
-    plt.plot(e_cm, label="Chord: ||e|| model")
-    plt.plot(e_nt, label="Newton: ||e|| true")
-    plt.plot(e_nm, label="Newton: ||e|| model")
+    for e_hist, label in series:
+        plt.plot(e_hist, label=label)
+
     plt.xlabel("iteration")
     plt.ylabel("||x* - fkin(q)||")
-    plt.title("Task error vs iteration")
+    plt.title(title)
     plt.grid(True)
     plt.legend()
     plt.show()
 
-def plot_spectral_norm_history(sig_ct, sig_cm, sig_nt, sig_nm):
+
+def plot_spectral_norm_history(series, title="Jacobian Residual Largest Entry"):
+    """
+    series: list of (sig_hist, label)
+    """
     plt.figure()
-    plt.plot(sig_ct, label="Chord: ||J||2 true")
-    plt.plot(sig_cm, label="Chord: ||J||2 model")
-    plt.plot(sig_nt, label="Newton: ||J||2 true")
-    plt.plot(sig_nm, label="Newton: ||J||2 model")
+    for sig_hist, label in series:
+        plt.plot(sig_hist, label=label)
+
     plt.xlabel("iteration")
-    plt.ylabel("spectral norm")
-    plt.title("Jacobian spectral norm along trajectory")
+    plt.ylabel("Jacobian entry with largest residual")
+    plt.title(title)
     plt.grid(True)
     plt.legend()
     plt.show()
-
+    
 
 def script(sin_list, cos_list, vars, robot_name, q0, q_star, damping=1e-3, chord_newton=False):
     # --- build symbolic FK (4x4) using your rotation-matrix chain
@@ -364,24 +369,28 @@ def main():
     parser.add_argument(
         "--chord_newton",
         action="store_true",
-        help="If set, runs chord Newton (fixed Jacobian) for the selected runs."
+        help="If set, runs chord Newton only. Otherwise runs full Newton only."
     )
     parser.add_argument(
         "--run_both",
         action="store_true",
-        help="If set, run BOTH chord and full Newton and plot 4-way comparisons (recommended)."
+        help="Run BOTH chord and full Newton, for BOTH true and model trig (4-way comparison)."
+    )
+    parser.add_argument(
+        "--true_only_compare",
+        action="store_true",
+        help="Run BOTH chord and full Newton, but using ONLY the true trig model."
     )
     args = parser.parse_args()
 
     dof = 3
     vars = sp.symbols(f"q0:{dof}", real=True)
     robot_name = f"dof{dof}"
-    joint_ranges = [(pi/6, pi/2)] * dof
 
     q0     = np.array([pi/4, pi/4, pi/3][:dof], dtype=float)
     q_star = np.array([pi/5, pi/2, pi/4][:dof], dtype=float)
 
-    # --- build piecewise trig lists once
+    # piecewise model trig
     sin_list_hat = []
     cos_list_hat = []
     for _ in range(dof):
@@ -390,18 +399,88 @@ def main():
         sin_list_hat.append(create_piecewise_sinusoid(sp.sin, sin_knots))
         cos_list_hat.append(create_piecewise_sinusoid(sp.cos, cos_knots))
 
+    # true trig
     sin_list_true = [sp.sin] * dof
     cos_list_true = [sp.cos] * dof
 
-    # choose which solver modes to run
+    # -------------------------------------------------
+    # MODE 1: true-only comparison (Chord True vs Newton True)
+    # -------------------------------------------------
+    if args.true_only_compare:
+        out_ct = script(
+            sin_list=sin_list_true,
+            cos_list=cos_list_true,
+            vars=vars,
+            robot_name=robot_name,
+            q0=q0,
+            q_star=q_star,
+            chord_newton=True
+        )
+        out_nt = script(
+            sin_list=sin_list_true,
+            cos_list=cos_list_true,
+            vars=vars,
+            robot_name=robot_name,
+            q0=q0,
+            q_star=q_star,
+            chord_newton=False
+        )
+
+        x_star = out_ct["x_star"]
+
+        e_ct = np.linalg.norm(out_ct["x_hist"] - x_star.reshape(1, -1), axis=1)
+        e_nt = np.linalg.norm(out_nt["x_hist"] - x_star.reshape(1, -1), axis=1)
+
+        # duplicate true trajectories into the "model" slots so your existing plotters still work
+        plot_cartesian_trajectory(
+            [
+                (out_ct["x_hist"], "Chord (true trig)"),
+                (out_nt["x_hist"], "Newton (true trig)"),
+            ],
+            x_star,
+            title="End-effector trajectory: true trig only"
+        )
+
+        plot_joint_trajectory(
+            [
+                (out_ct["q_hist"], "Chord (true trig)"),
+                (out_nt["q_hist"], "Newton (true trig)"),
+            ],
+            title="Joint-space trajectory: true trig only"
+        )
+
+        plot_error_history(
+            [
+                (e_ct, "Chord (true trig)"),
+                (e_nt, "Newton (true trig)"),
+            ],
+            title="Task error vs iteration: true trig only"
+        )
+
+        plot_spectral_norm_history(
+            [
+                (out_ct["sig_hist"], "Chord (true trig)"),
+                (out_nt["sig_hist"], "Newton (true trig)"),
+            ],
+            title="Jacobian spectral norm: true trig only"
+        )
+
+        print("\n--- Summary (true-only comparison) ---")
+        print(f"Target x*: {x_star}")
+        print(f"Chord  True: iters={out_ct['iters']}, final ||e||={e_ct[-1]}")
+        print(f"Newton True: iters={out_nt['iters']}, final ||e||={e_nt[-1]}")
+        return
+
+    # -------------------------------------------------
+    # MODE 2: original full 4-way comparison
+    # -------------------------------------------------
     modes = []
     if args.run_both:
         modes = [("chord", True), ("newton", False)]
     else:
         modes = [("chord" if args.chord_newton else "newton", args.chord_newton)]
 
-    # run (solver mode) x (model/true)
-    outs = {}  # outs[(mode_name, "true"/"model")] = script output
+    outs = {}
 
     for mode_name, chord_flag in modes:
         outs[(mode_name, "true")] = script(
@@ -423,7 +502,7 @@ def main():
             chord_newton=chord_flag
         )
 
-    # For 4-way plots we need both modes
+    # single solver, true vs model
     if not args.run_both:
         mode_name, _ = modes[0]
         out_t = outs[(mode_name, "true")]
@@ -433,20 +512,53 @@ def main():
         e_t = np.linalg.norm(out_t["x_hist"] - x_star.reshape(1, -1), axis=1)
         e_m = np.linalg.norm(out_m["x_hist"] - x_star.reshape(1, -1), axis=1)
 
-        # reuse your old 2-way plots (or keep these as-is)
-        plot_cartesian_trajectory(out_t["x_hist"], out_m["x_hist"], out_t["x_hist"], out_m["x_hist"], x_star)
-        plot_joint_trajectory(out_t["q_hist"], out_m["q_hist"], out_t["q_hist"], out_m["q_hist"])
-        plot_error_history(e_t, e_m, e_t, e_m)
-        plot_spectral_norm_history(out_t["sig_hist"], out_m["sig_hist"], out_t["sig_hist"], out_m["sig_hist"])
+        
+        plot_cartesian_trajectory(
+        [
+            (out_t["x_hist"], f"{mode_name} (true trig)"),
+            (out_m["x_hist"], f"{mode_name} (piecewise trig)"),
+        ],
+        x_star,
+        title="End-effector trajectory"
+        )
+
+        plot_joint_trajectory(
+            [
+                (out_t["q_hist"], f"{mode_name} (true trig)"),
+                (out_m["q_hist"], f"{mode_name} (piecewise trig)"),
+            ],
+            title="Joint-space trajectory"
+        )
+
+        plot_error_history(
+            [
+                (e_t, f"{mode_name} (true trig)"),
+                (e_m, f"{mode_name} (piecewise trig)"),
+            ],
+            title="Task error vs iteration"
+        )
+
+        plot_spectral_norm_history(
+            [
+                (out_t["sig_hist"], f"{mode_name} (true trig)"),
+                (out_m["sig_hist"], f"{mode_name} (piecewise trig)"),
+
+            ],
+            title="Largest Jacobian Error"
+        )
+
+        print(f"\n--- Summary ({mode_name}: true vs model) ---")
+        print(f"Target x*: {x_star}")
+        print(f"{mode_name.title()} True:  iters={out_t['iters']}, final ||e||={e_t[-1]}")
+        print(f"{mode_name.title()} Model: iters={out_m['iters']}, final ||e||={e_m[-1]}")
         return
 
-    # 4-way plot data
+    # 4-way comparison
     out_ct = outs[("chord", "true")]
     out_cm = outs[("chord", "model")]
     out_nt = outs[("newton", "true")]
     out_nm = outs[("newton", "model")]
 
-    # use a single target for fair comparison (true target from true FK at q_star)
     x_star = out_ct["x_star"]
 
     e_ct = np.linalg.norm(out_ct["x_hist"] - x_star.reshape(1, -1), axis=1)
@@ -454,10 +566,46 @@ def main():
     e_nt = np.linalg.norm(out_nt["x_hist"] - x_star.reshape(1, -1), axis=1)
     e_nm = np.linalg.norm(out_nm["x_hist"] - x_star.reshape(1, -1), axis=1)
 
-    plot_cartesian_trajectory(out_ct["x_hist"], out_cm["x_hist"], out_nt["x_hist"], out_nm["x_hist"], x_star)
-    plot_joint_trajectory(out_ct["q_hist"], out_cm["q_hist"], out_nt["q_hist"], out_nm["q_hist"])
-    plot_error_history(e_ct, e_cm, e_nt, e_nm)
-    plot_spectral_norm_history(out_ct["sig_hist"], out_cm["sig_hist"], out_nt["sig_hist"], out_nm["sig_hist"])
+    plot_cartesian_trajectory(
+    [
+        (out_ct["x_hist"], "Chord (true trig)"),
+        (out_cm["x_hist"], "Chord (piecewise trig)"),
+        (out_nt["x_hist"], "Newton (true trig)"),
+        (out_nm["x_hist"], "Newton (piecewise trig)"),
+    ],
+    x_star,
+    title="End-effector trajectory"
+    )
+
+    plot_joint_trajectory(
+        [
+            (out_ct["q_hist"], "Chord (true trig)"),
+            (out_cm["q_hist"], "Chord (piecewise trig)"),
+            (out_nt["q_hist"], "Newton (true trig)"),
+            (out_nm["q_hist"], "Newton (piecewise trig)"),
+        ],
+        title="Joint-space trajectory"
+    )
+
+    plot_error_history(
+        [
+            (e_ct, "Chord (true trig)"),
+            (e_cm, "Chord (piecewise trig)"),
+            (e_nt, "Newton (true trig)"),
+            (e_nm, "Newton (piecewise trig)"),
+        ],
+        title="Task error vs iteration"
+    )
+
+    plot_spectral_norm_history(
+        [
+            (out_ct["sig_hist"], "Chord (true trig)"),
+            (out_cm["sig_hist"], "Chord (piecewise trig)"),
+            (out_nt["sig_hist"], "Newton (true trig)"),
+            (out_nm["sig_hist"], "Newton (piecewise trig)"),
+        ],
+        title="Jacobian spectral norm along trajectory"
+    )
 
     print("\n--- Summary (4-way) ---")
     print(f"Target x*: {x_star}")
@@ -678,8 +826,8 @@ def plot_convergence_results(results):
 
 
 
-main()
-# eval_joint_space_main()
+# main()
+eval_joint_space_main()
 
 # def script(sin_list, cos_list, vars):
 #     rotation_matrix = get_robot_rotation_matrix(sin_hat=sin_list, cos_hat=cos_list, vars)
